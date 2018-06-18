@@ -29,10 +29,18 @@ const minPhysPageSize = 4096
 //
 //go:notinheap
 type mheap struct {
-	lock      mutex
-	free      mTreap    // free and non-scavenged spans
-	scav      mTreap    // free and scavenged spans
-	busy      mSpanList // busy list of spans
+	lock mutex
+	free mTreap    // free and non-scavenged spans
+	scav mTreap    // free and scavenged spans
+	busy mSpanList // busy list of spans
+
+	// Persistent memory management metadata
+	// These are similar to the above data members, but related
+	// to persistent memory management. Heap scavenging is currently not
+	// supported for persistent memory.
+	freeP     mTreap    // free and non-scavenged spans
+	scavP     mTreap    // free and scavenged spans
+	busyP     mSpanList // busy list of spans
 	sweepgen  uint32    // sweep generation, see comment in mspan
 	sweepdone uint32    // all spans are swept
 	sweepers  uint32    // number of active sweepone calls
@@ -141,6 +149,11 @@ type mheap struct {
 	// gets its own cache line.
 	// central is indexed by spanClass.
 	central [numSpanClasses]struct {
+		mcentral mcentral
+		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
+	}
+	// central free list for persistent memory spans
+	centralP [numSpanClasses]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}
@@ -611,8 +624,10 @@ func (h *mheap) init() {
 
 	// h->mapcache needs no init
 	h.busy.init()
+	h.busyP.init()
 	for i := range h.central {
 		h.central[i].mcentral.init(spanClass(i))
+		h.centralP[i].mcentral.init(spanClass(i))
 	}
 }
 
@@ -903,7 +918,7 @@ HaveSpan:
 		// If s was scavenged, then t may be scavenged.
 		start, end := t.physPageBounds()
 		if s.scavenged && start < end {
-			memstats.heap_released += uint64(end-start)
+			memstats.heap_released += uint64(end - start)
 			t.scavenged = true
 		}
 		s.state = mSpanManual // prevent coalescing with s
@@ -1145,7 +1160,7 @@ func (h *mheap) scavengeLargest(nbytes uintptr) {
 			//
 			// This check also preserves the invariant that spans that have
 			// `scavenged` set are only ever in the `scav` treap, and
-			// those which have it unset are only in the `free` treap. 
+			// those which have it unset are only in the `free` treap.
 			return
 		}
 		prev := t.pred()
@@ -1174,7 +1189,7 @@ func (h *mheap) scavengeAll(now, limit uint64) uintptr {
 	for t != nil {
 		s := t.spanKey
 		next := t.succ()
-		if (now-uint64(s.unusedsince)) > limit {
+		if (now - uint64(s.unusedsince)) > limit {
 			r := s.scavenge()
 			if r != 0 {
 				// If we ended up scavenging s, then remove it from unscav

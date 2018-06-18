@@ -38,6 +38,7 @@ type mcache struct {
 	// The rest is not accessed on every malloc.
 
 	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
+	allocP [numSpanClasses]*mspan // alloc array for persistent memory spans
 
 	stackcache [_NumStackOrders]stackfreelist
 
@@ -88,7 +89,8 @@ func allocmcache() *mcache {
 	c.flushGen = mheap_.sweepgen
 	unlock(&mheap_.lock)
 	for i := range c.alloc {
-		c.alloc[i] = &emptymspan
+		c.alloc[i] = &emptymspan  // clear span entry in mcache for volatile memory
+		c.allocP[i] = &emptymspan // clear span entry in mcache for persistent memory
 	}
 	c.next_sample = nextSample()
 	return c
@@ -154,6 +156,13 @@ func (c *mcache) releaseAll() {
 		if s != &emptymspan {
 			mheap_.central[i].mcentral.uncacheSpan(s)
 			c.alloc[i] = &emptymspan
+		}
+	}
+	for i := range c.allocP {
+		s := c.allocP[i]
+		if s != &emptymspan {
+			mheap_.centralP[i].mcentral.uncacheSpan(s)
+			c.allocP[i] = &emptymspan
 		}
 	}
 	// Clear tinyalloc pool.
