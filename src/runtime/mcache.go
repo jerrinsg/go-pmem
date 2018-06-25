@@ -118,7 +118,9 @@ func freemcache(c *mcache) {
 //
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
-func (c *mcache) refill(spc spanClass) {
+// The persistent parameter indicates whether the function should return
+// a span from persistent memory or volatile memory.
+func (c *mcache) refill(spc spanClass, persistent bool) {
 	// Return the current cached span to the central lists.
 	s := c.alloc[spc]
 

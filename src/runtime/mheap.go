@@ -838,7 +838,7 @@ func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero b
 //go:systemstack
 func (h *mheap) allocManual(npage uintptr, stat *uint64) *mspan {
 	lock(&h.lock)
-	s := h.allocSpanLocked(npage, stat, false) // todo replace false with a constant
+	s := h.allocSpanLocked(npage, stat, isNotPersistent)
 	if s != nil {
 		s.state = mSpanManual
 		s.manualFreeList = 0

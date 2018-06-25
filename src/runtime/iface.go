@@ -127,7 +127,7 @@ func itabAdd(m *itab) {
 		// t2 = new(itabTableType) + some additional entries
 		// We lie and tell malloc we want pointer-free memory because
 		// all the pointed-to values are not in the heap.
-		t2 := (*itabTableType)(mallocgc((2+2*t.size)*sys.PtrSize, nil, true))
+		t2 := (*itabTableType)(mallocgc((2+2*t.size)*sys.PtrSize, nil, needZeroed, isNotPersistent))
 		t2.size = t.size * 2
 
 		// Copy over entries.
@@ -281,7 +281,7 @@ func convT2E(t *_type, elem unsafe.Pointer) (e eface) {
 	if msanenabled {
 		msanread(elem, t.size)
 	}
-	x := mallocgc(t.size, t, true)
+	x := mallocgc(t.size, t, needZeroed, isNotPersistent)
 	// TODO: We allocate a zeroed object only to overwrite it with actual data.
 	// Figure out how to avoid zeroing. Also below in convT2Eslice, convT2I, convT2Islice.
 	typedmemmove(t, x, elem)
@@ -295,7 +295,7 @@ func convT2E16(t *_type, val uint16) (e eface) {
 	if val == 0 {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(2, t, false)
+		x = mallocgc(2, t, doesntNeedZeroed, isNotPersistent)
 		*(*uint16)(x) = val
 	}
 	e._type = t
@@ -308,7 +308,7 @@ func convT2E32(t *_type, val uint32) (e eface) {
 	if val == 0 {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(4, t, false)
+		x = mallocgc(4, t, doesntNeedZeroed, isNotPersistent)
 		*(*uint32)(x) = val
 	}
 	e._type = t
@@ -321,7 +321,7 @@ func convT2E64(t *_type, val uint64) (e eface) {
 	if val == 0 {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(8, t, false)
+		x = mallocgc(8, t, doesntNeedZeroed, isNotPersistent)
 		*(*uint64)(x) = val
 	}
 	e._type = t
@@ -334,7 +334,7 @@ func convT2Estring(t *_type, val string) (e eface) {
 	if val == "" {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(unsafe.Sizeof(val), t, true)
+		x = mallocgc(unsafe.Sizeof(val), t, needZeroed, isNotPersistent)
 		*(*string)(x) = val
 	}
 	e._type = t
@@ -348,7 +348,7 @@ func convT2Eslice(t *_type, val []byte) (e eface) {
 	if (*slice)(unsafe.Pointer(&val)).array == nil {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(unsafe.Sizeof(val), t, true)
+		x = mallocgc(unsafe.Sizeof(val), t, needZeroed, isNotPersistent)
 		*(*[]byte)(x) = val
 	}
 	e._type = t
@@ -363,7 +363,7 @@ func convT2Enoptr(t *_type, elem unsafe.Pointer) (e eface) {
 	if msanenabled {
 		msanread(elem, t.size)
 	}
-	x := mallocgc(t.size, t, false)
+	x := mallocgc(t.size, t, doesntNeedZeroed, isNotPersistent)
 	memmove(x, elem, t.size)
 	e._type = t
 	e.data = x
@@ -378,7 +378,7 @@ func convT2I(tab *itab, elem unsafe.Pointer) (i iface) {
 	if msanenabled {
 		msanread(elem, t.size)
 	}
-	x := mallocgc(t.size, t, true)
+	x := mallocgc(t.size, t, needZeroed, isNotPersistent)
 	typedmemmove(t, x, elem)
 	i.tab = tab
 	i.data = x
@@ -391,7 +391,7 @@ func convT2I16(tab *itab, val uint16) (i iface) {
 	if val == 0 {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(2, t, false)
+		x = mallocgc(2, t, doesntNeedZeroed, isNotPersistent)
 		*(*uint16)(x) = val
 	}
 	i.tab = tab
@@ -405,7 +405,7 @@ func convT2I32(tab *itab, val uint32) (i iface) {
 	if val == 0 {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(4, t, false)
+		x = mallocgc(4, t, doesntNeedZeroed, isNotPersistent)
 		*(*uint32)(x) = val
 	}
 	i.tab = tab
@@ -419,7 +419,7 @@ func convT2I64(tab *itab, val uint64) (i iface) {
 	if val == 0 {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(8, t, false)
+		x = mallocgc(8, t, doesntNeedZeroed, isNotPersistent)
 		*(*uint64)(x) = val
 	}
 	i.tab = tab
@@ -433,7 +433,7 @@ func convT2Istring(tab *itab, val string) (i iface) {
 	if val == "" {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(unsafe.Sizeof(val), t, true)
+		x = mallocgc(unsafe.Sizeof(val), t, needZeroed, isNotPersistent)
 		*(*string)(x) = val
 	}
 	i.tab = tab
@@ -448,7 +448,7 @@ func convT2Islice(tab *itab, val []byte) (i iface) {
 	if (*slice)(unsafe.Pointer(&val)).array == nil {
 		x = unsafe.Pointer(&zeroVal[0])
 	} else {
-		x = mallocgc(unsafe.Sizeof(val), t, true)
+		x = mallocgc(unsafe.Sizeof(val), t, needZeroed, isNotPersistent)
 		*(*[]byte)(x) = val
 	}
 	i.tab = tab
@@ -464,7 +464,7 @@ func convT2Inoptr(tab *itab, elem unsafe.Pointer) (i iface) {
 	if msanenabled {
 		msanread(elem, t.size)
 	}
-	x := mallocgc(t.size, t, false)
+	x := mallocgc(t.size, t, doesntNeedZeroed, isNotPersistent)
 	memmove(x, elem, t.size)
 	i.tab = tab
 	i.data = x

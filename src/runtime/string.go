@@ -99,7 +99,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	if buf != nil && len(b) <= len(buf) {
 		p = unsafe.Pointer(buf)
 	} else {
-		p = mallocgc(uintptr(len(b)), nil, false)
+		p = mallocgc(uintptr(len(b)), nil, doesntNeedZeroed, isNotPersistent)
 	}
 	stringStructOf(&str).str = p
 	stringStructOf(&str).len = len(b)
@@ -256,7 +256,7 @@ func intstring(buf *[4]byte, v int64) (s string) {
 // The storage is not zeroed. Callers should use
 // b to set the string contents and then drop b.
 func rawstring(size int) (s string, b []byte) {
-	p := mallocgc(uintptr(size), nil, false)
+	p := mallocgc(uintptr(size), nil, doesntNeedZeroed, isNotPersistent)
 
 	stringStructOf(&s).str = p
 	stringStructOf(&s).len = size
@@ -269,7 +269,7 @@ func rawstring(size int) (s string, b []byte) {
 // rawbyteslice allocates a new byte slice. The byte slice is not zeroed.
 func rawbyteslice(size int) (b []byte) {
 	cap := roundupsize(uintptr(size))
-	p := mallocgc(cap, nil, false)
+	p := mallocgc(cap, nil, doesntNeedZeroed, isNotPersistent)
 	if cap != uintptr(size) {
 		memclrNoHeapPointers(add(p, uintptr(size)), cap-uintptr(size))
 	}
@@ -284,7 +284,7 @@ func rawruneslice(size int) (b []rune) {
 		throw("out of memory")
 	}
 	mem := roundupsize(uintptr(size) * 4)
-	p := mallocgc(mem, nil, false)
+	p := mallocgc(mem, nil, doesntNeedZeroed, isNotPersistent)
 	if mem != uintptr(size)*4 {
 		memclrNoHeapPointers(add(p, uintptr(size)*4), mem-uintptr(size)*4)
 	}
@@ -303,7 +303,7 @@ func gobytes(p *byte, n int) (b []byte) {
 		panic(errorString("gobytes: length out of range"))
 	}
 
-	bp := mallocgc(uintptr(n), nil, false)
+	bp := mallocgc(uintptr(n), nil, doesntNeedZeroed, isNotPersistent)
 	memmove(bp, unsafe.Pointer(p), uintptr(n))
 
 	*(*slice)(unsafe.Pointer(&b)) = slice{bp, n, n}

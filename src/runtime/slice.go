@@ -46,7 +46,7 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
-	return mallocgc(mem, et, true)
+	return mallocgc(mem, et, needZeroed, isNotPersistent)
 }
 
 func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
@@ -172,13 +172,13 @@ func growslice(et *_type, old slice, cap int) slice {
 
 	var p unsafe.Pointer
 	if et.kind&kindNoPointers != 0 {
-		p = mallocgc(capmem, nil, false)
+		p = mallocgc(capmem, nil, doesntNeedZeroed, isNotPersistent)
 		// The append() that calls growslice is going to overwrite from old.len to cap (which will be the new length).
 		// Only clear the part that will not be overwritten.
 		memclrNoHeapPointers(add(p, newlenmem), capmem-newlenmem)
 	} else {
 		// Note: can't use rawmem (which avoids zeroing of memory), because then GC can scan uninitialized memory.
-		p = mallocgc(capmem, et, true)
+		p = mallocgc(capmem, et, needZeroed, isNotPersistent)
 		if writeBarrier.enabled {
 			// Only shade the pointers in old.array since we know the destination slice p
 			// only contains nil pointers because it has been cleared during alloc.

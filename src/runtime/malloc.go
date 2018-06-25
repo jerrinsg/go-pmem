@@ -114,6 +114,9 @@ import (
 const (
 	debugMalloc = false
 
+	needZeroed       = true
+	doesntNeedZeroed = false
+
 	maxTinySize   = _TinySize
 	tinySizeClass = _TinySizeClass
 	maxSmallSize  = _MaxSmallSize
@@ -736,8 +739,16 @@ func nextFreeFast(s *mspan) gclinkptr {
 //
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
-func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bool) {
-	s = c.alloc[spc]
+// The persistent parameter indicates if the allocation request is for persistent memory
+// or volatile memory
+func (c *mcache) nextFree(spc spanClass, persistent bool) (v gclinkptr, s *mspan, shouldhelpgc bool) {
+	var alloc []*mspan
+	if persistent {
+		alloc = c.allocP[:]
+	} else {
+		alloc = c.alloc[:]
+	}
+	s = alloc[spc]
 	shouldhelpgc = false
 	freeIndex := s.nextFreeIndex()
 	if freeIndex == s.nelems {
@@ -746,9 +757,9 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 			println("runtime: s.allocCount=", s.allocCount, "s.nelems=", s.nelems)
 			throw("s.allocCount != s.nelems && freeIndex == s.nelems")
 		}
-		c.refill(spc)
+		c.refill(spc, persistent)
 		shouldhelpgc = true
-		s = c.alloc[spc]
+		s = alloc[spc]
 
 		freeIndex = s.nextFreeIndex()
 	}
@@ -769,13 +780,19 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 // Allocate an object of size bytes.
 // Small objects are allocated from the per-P cache's free lists.
 // Large objects (> 32 kB) are allocated straight from the heap.
-func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
+// The persistent parameter indicates if memory has to be allocated
+// from volatile heap or persistent heap.
+func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.Pointer {
 	if gcphase == _GCmarktermination {
 		throw("mallocgc called with gcphase == _GCmarktermination")
 	}
 
 	if size == 0 {
-		return unsafe.Pointer(&zerobase)
+		if persistent {
+			size = 1 // Allocate at least 1 byte
+		} else {
+			return unsafe.Pointer(&zerobase)
+		}
 	}
 
 	if debug.sbrk != 0 {
@@ -822,6 +839,13 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	c := gomcache()
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
+	var alloc []*mspan
+	if persistent {
+		alloc = c.allocP[:]
+	} else {
+		alloc = c.alloc[:]
+	}
+
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
 			// Tiny allocator.
@@ -853,6 +877,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			// standalone escaping variables. On a json benchmark
 			// the allocator reduces number of allocations by ~12% and
 			// reduces heap size by ~20%.
+			// todo support for persistent memory tiny allocations
 			off := c.tinyoffset
 			// Align tiny pointer for required (conservative) alignment.
 			if size&7 == 0 {
@@ -875,7 +900,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			span := c.alloc[tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, _, shouldhelpgc = c.nextFree(tinySpanClass)
+				v, _, shouldhelpgc = c.nextFree(tinySpanClass, persistent)
 			}
 			x = unsafe.Pointer(v)
 			(*[2]uint64)(x)[0] = 0
@@ -896,10 +921,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span := c.alloc[spc]
+			span := alloc[spc]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, span, shouldhelpgc = c.nextFree(spc)
+				v, span, shouldhelpgc = c.nextFree(spc, persistent)
 			}
 			x = unsafe.Pointer(v)
 			if needzero && span.needzero != 0 {
@@ -910,7 +935,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		var s *mspan
 		shouldhelpgc = true
 		systemstack(func() {
-			s = largeAlloc(size, needzero, noscan)
+			s = largeAlloc(size, needzero, noscan, persistent)
 		})
 		s.freeindex = 1
 		s.allocCount = 1
@@ -999,7 +1024,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	return x
 }
 
-func largeAlloc(size uintptr, needzero bool, noscan bool) *mspan {
+// The persistent parameter indicates if the memory should be allocated from
+// persistent memory or volatile memory.
+func largeAlloc(size uintptr, needzero bool, noscan bool, persistent bool) *mspan {
 	// print("largeAlloc size=", size, "\n")
 
 	if size+_PageSize < size {
@@ -1015,7 +1042,7 @@ func largeAlloc(size uintptr, needzero bool, noscan bool) *mspan {
 	// pays the debt down to npage pages.
 	deductSweepCredit(npages*_PageSize, npages)
 
-	s := mheap_.alloc(npages, makeSpanClass(0, noscan), true, needzero, false) // todo replace false with a constant
+	s := mheap_.alloc(npages, makeSpanClass(0, noscan), true, needzero, persistent)
 	if s == nil {
 		throw("out of memory")
 	}
@@ -1028,24 +1055,24 @@ func largeAlloc(size uintptr, needzero bool, noscan bool) *mspan {
 // compiler (both frontend and SSA backend) knows the signature
 // of this function
 func newobject(typ *_type) unsafe.Pointer {
-	return mallocgc(typ.size, typ, true)
+	return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
 }
 
 //go:linkname reflect_unsafe_New reflect.unsafe_New
 func reflect_unsafe_New(typ *_type) unsafe.Pointer {
-	return mallocgc(typ.size, typ, true)
+	return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
 }
 
 // newarray allocates an array of n elements of type typ.
 func newarray(typ *_type, n int) unsafe.Pointer {
 	if n == 1 {
-		return mallocgc(typ.size, typ, true)
+		return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
 	}
 	mem, overflow := math.MulUintptr(typ.size, uintptr(n))
 	if overflow || mem > maxAlloc || n < 0 {
 		panic(plainError("runtime: allocation size out of range"))
 	}
-	return mallocgc(mem, typ, true)
+	return mallocgc(mem, typ, needZeroed, isNotPersistent)
 }
 
 //go:linkname reflect_unsafe_NewArray reflect.unsafe_NewArray

@@ -189,7 +189,7 @@ func runfinq() {
 					// all not yet finalized objects are stored in finq.
 					// If we do not mark it as FlagNoScan,
 					// the last finalized object is not collected.
-					frame = mallocgc(framesz, nil, true)
+					frame = mallocgc(framesz, nil, needZeroed, isNotPersistent)
 					framecap = framesz
 				}
 
