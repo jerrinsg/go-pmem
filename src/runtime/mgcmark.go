@@ -1318,12 +1318,18 @@ func gcmarknewobject(obj, size, scanSize uintptr) {
 func gcMarkTinyAllocs() {
 	for _, p := range allp {
 		c := p.mcache
-		if c == nil || c.tiny == 0 {
+		if c == nil {
 			continue
 		}
-		_, span, objIndex := findObject(c.tiny, 0, 0)
-		gcw := &p.gcw
-		greyobject(c.tiny, 0, 0, span, gcw, objIndex)
+		tinyPtrs := []uintptr{c.tiny, c.tinyP}
+		for _, tiny := range tinyPtrs {
+			if tiny == 0 {
+				continue
+			}
+			_, span, objIndex := findObject(tiny, 0, 0)
+			gcw := &p.gcw
+			greyobject(tiny, 0, 0, span, gcw, objIndex)
+		}
 	}
 }
 

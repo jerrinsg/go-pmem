@@ -32,7 +32,9 @@ type mcache struct {
 	// we handle it by clearing it in releaseAll during mark
 	// termination.
 	tiny             uintptr
+	tinyP            uintptr // tiny heap pointer for persistent memory
 	tinyoffset       uintptr
+	tinyoffsetP      uintptr // tinyoffset for persistent memory
 	local_tinyallocs uintptr // number of tiny allocs not counted in other stats
 
 	// The rest is not accessed on every malloc.
@@ -167,9 +169,12 @@ func (c *mcache) releaseAll() {
 			c.allocP[i] = &emptymspan
 		}
 	}
-	// Clear tinyalloc pool.
+	// Clear tinyalloc pool for volatile memory.
 	c.tiny = 0
 	c.tinyoffset = 0
+	// Clear tinyalloc pool for persistent memory.
+	c.tinyP = 0
+	c.tinyoffsetP = 0
 }
 
 // prepareForSweep flushes c if the system has entered a new sweep phase

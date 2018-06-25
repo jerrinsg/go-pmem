@@ -877,8 +877,17 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 			// standalone escaping variables. On a json benchmark
 			// the allocator reduces number of allocations by ~12% and
 			// reduces heap size by ~20%.
-			// todo support for persistent memory tiny allocations
-			off := c.tinyoffset
+			var off uintptr
+			var offAddr, tinyAddr *uintptr
+			if persistent {
+				off = c.tinyoffsetP
+				offAddr = &c.tinyoffsetP
+				tinyAddr = &c.tinyP
+			} else {
+				off = c.tinyoffset
+				offAddr = &c.tinyoffset
+				tinyAddr = &c.tiny
+			}
 			// Align tiny pointer for required (conservative) alignment.
 			if size&7 == 0 {
 				off = round(off, 8)
@@ -887,17 +896,17 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 			} else if size&1 == 0 {
 				off = round(off, 2)
 			}
-			if off+size <= maxTinySize && c.tiny != 0 {
+			if off+size <= maxTinySize && *tinyAddr != 0 {
 				// The object fits into existing tiny block.
-				x = unsafe.Pointer(c.tiny + off)
-				c.tinyoffset = off + size
+				x = unsafe.Pointer(*tinyAddr + off)
+				*offAddr = off + size
 				c.local_tinyallocs++
 				mp.mallocing = 0
 				releasem(mp)
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span := c.alloc[tinySpanClass]
+			span := alloc[tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, _, shouldhelpgc = c.nextFree(tinySpanClass, persistent)
@@ -907,9 +916,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 			(*[2]uint64)(x)[1] = 0
 			// See if we need to replace the existing tiny block with the new one
 			// based on amount of remaining free space.
-			if size < c.tinyoffset || c.tiny == 0 {
-				c.tiny = uintptr(x)
-				c.tinyoffset = size
+			if size < *offAddr || *tinyAddr == 0 {
+				*tinyAddr = uintptr(x)
+				*offAddr = size
 			}
 			size = maxTinySize
 		} else {
