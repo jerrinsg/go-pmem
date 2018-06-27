@@ -701,9 +701,9 @@ func (h *mheap) reclaim(npage uintptr) {
 // persistent memory or volatile memory.
 //
 //go:systemstack
-func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persistent bool) *mspan {
+func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persistent int) *mspan {
 	var busy *mSpanList
-	if persistent {
+	if persistent == isPersistent {
 		busy = &h.busyP
 	} else {
 		busy = &h.busy
@@ -802,7 +802,7 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persiste
 //
 // The persistent parameter indicates if the memory has to be allocated from
 // persistent memory or volatile memory.
-func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero bool, persistent bool) *mspan {
+func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero bool, persistent int) *mspan {
 	// Don't do any operations that lock the heap on the G stack.
 	// It might trigger stack growth, and the stack growth code needs
 	// to be able to allocate heap.
@@ -816,7 +816,8 @@ func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero b
 			memclrNoHeapPointers(unsafe.Pointer(s.base()), s.npages<<_PageShift)
 		}
 		s.needzero = 0
-		s.persistent = persistent
+		// todo make s.persistent an int
+		s.persistent = (persistent == isPersistent)
 	}
 	return s
 }
@@ -884,10 +885,10 @@ func (h *mheap) setSpans(base, npage uintptr, s *mspan) {
 // free structures, but its state is still mSpanFree.
 // The persistent parameter indicates if the memory has to be allocated from
 // persistent memory or volatile memory.
-func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64, persistent bool) *mspan {
+func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64, persistent int) *mspan {
 	var s *mspan
 	var free, scav *mTreap
-	if persistent {
+	if persistent == isPersistent {
 		free = &h.freeP
 		scav = &h.scavP
 	} else {
@@ -920,7 +921,8 @@ func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64, persistent bool) *m
 	return nil
 
 HaveSpan:
-	if s.persistent != persistent {
+	// todo make s.persistent an int
+	if s.persistent != (persistent == isPersistent) {
 		throw("allocSpanLocked: got incorrect span in h.free")
 	}
 	// Mark span in use.
@@ -940,7 +942,8 @@ HaveSpan:
 		// Trim extra and put it back in the heap.
 		t := (*mspan)(h.spanalloc.alloc())
 		t.init(s.base()+npage<<_PageShift, s.npages-npage)
-		t.persistent = persistent
+		// todo make s.persistent an int
+		t.persistent = (persistent == isPersistent)
 		s.npages = npage
 		h.setSpan(t.base()-1, s)
 		h.setSpan(t.base(), t)
@@ -986,7 +989,7 @@ HaveSpan:
 // h must be locked.
 // The persistent parameter indicates if the memory should be allocated from
 // persistent memory or volatile memory.
-func (h *mheap) grow(npage uintptr, persistent bool) bool {
+func (h *mheap) grow(npage uintptr, persistent int) bool {
 	ask := npage << _PageShift
 	// todo persistent memory version
 	v, size := h.sysAlloc(ask)
@@ -995,7 +998,7 @@ func (h *mheap) grow(npage uintptr, persistent bool) bool {
 		return false
 	}
 
-	if persistent == false {
+	if persistent == isNotPersistent {
 		// Scavenge some pages out of the free treap to make up for
 		// the virtual memory space we just allocated. We prefer to
 		// scavenge the largest spans first since the cost of scavenging
@@ -1009,7 +1012,8 @@ func (h *mheap) grow(npage uintptr, persistent bool) bool {
 	// right coalescing happens.
 	s := (*mspan)(h.spanalloc.alloc())
 	s.init(uintptr(v), size/pageSize)
-	s.persistent = persistent
+	// todo make s.persistent an int
+	s.persistent = (persistent == isPersistent)
 	h.setSpans(s.base(), s.npages, s)
 	atomic.Store(&s.sweepgen, h.sweepgen)
 	s.state = mSpanInUse

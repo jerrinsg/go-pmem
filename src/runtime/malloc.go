@@ -741,9 +741,9 @@ func nextFreeFast(s *mspan) gclinkptr {
 // c could change.
 // The persistent parameter indicates if the allocation request is for persistent memory
 // or volatile memory
-func (c *mcache) nextFree(spc spanClass, persistent bool) (v gclinkptr, s *mspan, shouldhelpgc bool) {
+func (c *mcache) nextFree(spc spanClass, persistent int) (v gclinkptr, s *mspan, shouldhelpgc bool) {
 	var alloc []*mspan
-	if persistent {
+	if persistent == isPersistent {
 		alloc = c.allocP[:]
 	} else {
 		alloc = c.alloc[:]
@@ -782,13 +782,13 @@ func (c *mcache) nextFree(spc spanClass, persistent bool) (v gclinkptr, s *mspan
 // Large objects (> 32 kB) are allocated straight from the heap.
 // The persistent parameter indicates if memory has to be allocated
 // from volatile heap or persistent heap.
-func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.Pointer {
+func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Pointer {
 	if gcphase == _GCmarktermination {
 		throw("mallocgc called with gcphase == _GCmarktermination")
 	}
 
 	if size == 0 {
-		if persistent {
+		if persistent == isPersistent {
 			size = 1 // Allocate at least 1 byte
 		} else {
 			return unsafe.Pointer(&zerobase)
@@ -840,7 +840,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
 	var alloc []*mspan
-	if persistent {
+	if persistent == isPersistent {
 		alloc = c.allocP[:]
 	} else {
 		alloc = c.alloc[:]
@@ -877,17 +877,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 			// standalone escaping variables. On a json benchmark
 			// the allocator reduces number of allocations by ~12% and
 			// reduces heap size by ~20%.
-			var off uintptr
-			var offAddr, tinyAddr *uintptr
-			if persistent {
-				off = c.tinyoffsetP
-				offAddr = &c.tinyoffsetP
-				tinyAddr = &c.tinyP
-			} else {
-				off = c.tinyoffset
-				offAddr = &c.tinyoffset
-				tinyAddr = &c.tiny
-			}
+			off := c.tinyoffset[persistent]
 			// Align tiny pointer for required (conservative) alignment.
 			if size&7 == 0 {
 				off = round(off, 8)
@@ -896,10 +886,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 			} else if size&1 == 0 {
 				off = round(off, 2)
 			}
-			if off+size <= maxTinySize && *tinyAddr != 0 {
+			if off+size <= maxTinySize && c.tiny[persistent] != 0 {
 				// The object fits into existing tiny block.
-				x = unsafe.Pointer(*tinyAddr + off)
-				*offAddr = off + size
+				x = unsafe.Pointer(c.tiny[persistent] + off)
+				c.tinyoffset[persistent] = off + size
 				c.local_tinyallocs++
 				mp.mallocing = 0
 				releasem(mp)
@@ -916,9 +906,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 			(*[2]uint64)(x)[1] = 0
 			// See if we need to replace the existing tiny block with the new one
 			// based on amount of remaining free space.
-			if size < *offAddr || *tinyAddr == 0 {
-				*tinyAddr = uintptr(x)
-				*offAddr = size
+			if size < c.tinyoffset[persistent] || c.tiny[persistent] == 0 {
+				c.tiny[persistent] = uintptr(x)
+				c.tinyoffset[persistent] = size
 			}
 			size = maxTinySize
 		} else {
@@ -1035,7 +1025,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent bool) unsafe.P
 
 // The persistent parameter indicates if the memory should be allocated from
 // persistent memory or volatile memory.
-func largeAlloc(size uintptr, needzero bool, noscan bool, persistent bool) *mspan {
+func largeAlloc(size uintptr, needzero bool, noscan bool, persistent int) *mspan {
 	// print("largeAlloc size=", size, "\n")
 
 	if size+_PageSize < size {

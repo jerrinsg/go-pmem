@@ -1321,14 +1321,13 @@ func gcMarkTinyAllocs() {
 		if c == nil {
 			continue
 		}
-		tinyPtrs := []uintptr{c.tiny, c.tinyP}
-		for _, tiny := range tinyPtrs {
-			if tiny == 0 {
+		for _, memtype := range memTypes {
+			if c.tiny[memtype] == 0 {
 				continue
 			}
-			_, span, objIndex := findObject(tiny, 0, 0)
+			_, span, objIndex := findObject(c.tiny[memtype], 0, 0)
 			gcw := &p.gcw
-			greyobject(tiny, 0, 0, span, gcw, objIndex)
+			greyobject(c.tiny[memtype], 0, 0, span, gcw, objIndex)
 		}
 	}
 }

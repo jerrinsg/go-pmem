@@ -1,6 +1,10 @@
 package runtime
 
 const (
-	isPersistent    = true
-	isNotPersistent = false
+	isNotPersistent = 0
+	isPersistent    = 1
+)
+
+var (
+	memTypes = []int{isPersistent, isNotPersistent}
 )

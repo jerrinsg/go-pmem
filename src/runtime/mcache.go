@@ -31,15 +31,17 @@ type mcache struct {
 	// tiny is a heap pointer. Since mcache is in non-GC'd memory,
 	// we handle it by clearing it in releaseAll during mark
 	// termination.
-	tiny             uintptr
-	tinyP            uintptr // tiny heap pointer for persistent memory
-	tinyoffset       uintptr
-	tinyoffsetP      uintptr // tinyoffset for persistent memory
+	// tiny[0] is the heap pointer for volatile memory and tiny[1] is the heap
+	// pointer for persistent memory.
+	tiny [2]uintptr
+	// tinyoffset[0] is the tiny offset for volatile memory and tinyoffset[1] is
+	// the tiny offset for persistent memory.
+	tinyoffset       [2]uintptr
 	local_tinyallocs uintptr // number of tiny allocs not counted in other stats
 
 	// The rest is not accessed on every malloc.
 
-	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
+	alloc  [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 	allocP [numSpanClasses]*mspan // alloc array for persistent memory spans
 
 	stackcache [_NumStackOrders]stackfreelist
@@ -122,7 +124,8 @@ func freemcache(c *mcache) {
 // c could change.
 // The persistent parameter indicates whether the function should return
 // a span from persistent memory or volatile memory.
-func (c *mcache) refill(spc spanClass, persistent bool) {
+func (c *mcache) refill(spc spanClass, persistent int) {
+	// todo add persistent memory support
 	// Return the current cached span to the central lists.
 	s := c.alloc[spc]
 
@@ -169,12 +172,11 @@ func (c *mcache) releaseAll() {
 			c.allocP[i] = &emptymspan
 		}
 	}
-	// Clear tinyalloc pool for volatile memory.
-	c.tiny = 0
-	c.tinyoffset = 0
-	// Clear tinyalloc pool for persistent memory.
-	c.tinyP = 0
-	c.tinyoffsetP = 0
+	// Clear tinyalloc pool.
+	for _, memtype := range memTypes {
+		c.tiny[memtype] = 0
+		c.tinyoffset[memtype] = 0
+	}
 }
 
 // prepareForSweep flushes c if the system has entered a new sweep phase
