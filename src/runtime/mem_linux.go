@@ -11,8 +11,13 @@ import (
 )
 
 const (
-	_EACCES = 13
-	_EINVAL = 22
+	_EACCES              = 13
+	_EINVAL              = 22
+	_O_RDWR              = 0x2
+	_O_CREAT             = 0x40
+	_MAP_SHARED_VALIDATE = 0x03
+	_MAP_SYNC            = 0x80000
+	_PERM_ALL            = 0666 // read, write access to all users
 )
 
 // Don't split the stack as this method may be invoked without a valid G, which
@@ -157,14 +162,46 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 	return p
 }
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, persistent int) {
 	mSysStatInc(sysStat, n)
 
-	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)
+	fd := int32(-1)
+	var mapFlags int32
+
+	if persistent == isPersistent {
+		if pmemInfo.initialized {
+			// We support mapping a file in persistent memory only once. If persistent
+			// memory is already initialized, we have then run out of persistent memory.
+			throw("sysMapP(): Out of memory")
+		}
+		// MAP_SYNC flag is supported only for files that support DAX (direct
+		// mapping of persistent memory). Mapping other files with this flag will
+		// fail with EOPNOTSUPP.
+		// todo - add support to check if file support DAX mode mapping.
+		mapFlags = _MAP_SYNC | _MAP_SHARED_VALIDATE | _MAP_FIXED
+
+		// pmemInfo.fname is the file that user wishes to use for persistent
+		// memory allocations.
+		arr := []byte(pmemInfo.fname)
+		fd = open(&arr[0], _O_CREAT|_O_RDWR, _PERM_ALL)
+		if fd < 0 {
+			throw("file open failed")
+		}
+		if fallocate(uintptr(fd), 0, 0, n) < 0 {
+			throw("fallocate failed")
+		}
+	} else {
+		mapFlags = _MAP_ANON | _MAP_FIXED | _MAP_PRIVATE
+	}
+
+	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, fd, 0)
 	if err == _ENOMEM {
 		throw("runtime: out of memory")
 	}
 	if p != v || err != 0 {
 		throw("runtime: cannot map pages in arena address space")
+	}
+	if fd > 0 && closefd(fd) < 0 {
+		throw("error closing file")
 	}
 }
