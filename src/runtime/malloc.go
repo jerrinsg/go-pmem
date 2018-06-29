@@ -742,13 +742,7 @@ func nextFreeFast(s *mspan) gclinkptr {
 // The persistent parameter indicates if the allocation request is for persistent memory
 // or volatile memory
 func (c *mcache) nextFree(spc spanClass, persistent int) (v gclinkptr, s *mspan, shouldhelpgc bool) {
-	var alloc []*mspan
-	if persistent == isPersistent {
-		alloc = c.allocP[:]
-	} else {
-		alloc = c.alloc[:]
-	}
-	s = alloc[spc]
+	s = c.alloc[persistent][spc]
 	shouldhelpgc = false
 	freeIndex := s.nextFreeIndex()
 	if freeIndex == s.nelems {
@@ -759,7 +753,7 @@ func (c *mcache) nextFree(spc spanClass, persistent int) (v gclinkptr, s *mspan,
 		}
 		c.refill(spc, persistent)
 		shouldhelpgc = true
-		s = alloc[spc]
+		s = c.alloc[persistent][spc]
 
 		freeIndex = s.nextFreeIndex()
 	}
@@ -839,12 +833,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 	c := gomcache()
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
-	var alloc []*mspan
-	if persistent == isPersistent {
-		alloc = c.allocP[:]
-	} else {
-		alloc = c.alloc[:]
-	}
 
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
@@ -896,7 +884,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span := alloc[tinySpanClass]
+			span := c.alloc[persistent][tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, _, shouldhelpgc = c.nextFree(tinySpanClass, persistent)
@@ -920,7 +908,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span := alloc[spc]
+			span := c.alloc[persistent][spc]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(spc, persistent)

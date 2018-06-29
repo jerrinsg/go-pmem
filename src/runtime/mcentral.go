@@ -37,7 +37,10 @@ func (c *mcentral) init(spc spanClass) {
 }
 
 // Allocate a span to use in an MCache.
-func (c *mcentral) cacheSpan() *mspan {
+// The persistent parameter indicates if the memory should be allocated from
+// persistent memory or volatile memory.
+func (c *mcentral) cacheSpan(persistent int) *mspan {
+	// todo add persistent memory support
 	// Deduct credit for this span allocation and sweep if necessary.
 	spanBytes := uintptr(class_to_allocnpages[c.spanclass.sizeclass()]) * _PageSize
 	deductSweepCredit(spanBytes, 0)

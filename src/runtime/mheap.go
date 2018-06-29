@@ -144,12 +144,9 @@ type mheap struct {
 	// spaced CacheLinePadSize bytes apart, so that each MCentral.lock
 	// gets its own cache line.
 	// central is indexed by spanClass.
-	central [numSpanClasses]struct {
-		mcentral mcentral
-		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
-	}
-	// central free list for persistent memory spans
-	centralP [numSpanClasses]struct {
+	// central[0] stores the central free lists for volatile memory and
+	// central[1] stores the central free lists for persistent memory.
+	central [2][numSpanClasses]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}
@@ -625,10 +622,9 @@ func (h *mheap) init() {
 	// h->mapcache needs no init
 	for _, memtype := range memTypes {
 		h.busy[memtype].init()
-	}
-	for i := range h.central {
-		h.central[i].mcentral.init(spanClass(i))
-		h.centralP[i].mcentral.init(spanClass(i))
+		for i := range h.central[memtype] {
+			h.central[memtype][i].mcentral.init(spanClass(i))
+		}
 	}
 }
 

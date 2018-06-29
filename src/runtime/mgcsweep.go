@@ -338,7 +338,10 @@ func (s *mspan) sweep(preserve bool) bool {
 
 	if nfreed > 0 && spc.sizeclass() != 0 {
 		c.local_nsmallfree[spc.sizeclass()] += uintptr(nfreed)
-		res = mheap_.central[spc].mcentral.freeSpan(s, preserve, wasempty)
+		if s.persistent == isPersistent {
+			throw("got a persistent span in mgcsweep")
+		}
+		res = mheap_.central[s.persistent][spc].mcentral.freeSpan(s, preserve, wasempty)
 		// MCentral_FreeSpan updates sweepgen
 	} else if freeToHeap {
 		// Free large span to heap
