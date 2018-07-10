@@ -203,7 +203,7 @@ func walkstmt(n *Node) *Node {
 				yyerror("%v escapes to heap, not allowed in runtime.", v)
 			}
 			if prealloc[v] == nil {
-				prealloc[v] = callnew(v.Type)
+				prealloc[v] = callnew(v.Type, isNotPersistent)
 			}
 			nn := nod(OAS, v.Name.Param.Heapaddr, prealloc[v])
 			nn.SetColas(true)
@@ -1154,7 +1154,7 @@ opswitch:
 			n = reduceSlice(n)
 		}
 
-	case ONEW:
+	case ONEW, OPNEW:
 		if n.Esc == EscNone {
 			if n.Type.Elem().Width >= maxImplicitStackVarSize {
 				Fatalf("large ONEW with EscNone: %v", n)
@@ -1167,7 +1167,11 @@ opswitch:
 			r = typecheck(r, Erv)
 			n = r
 		} else {
-			n = callnew(n.Type.Elem())
+			persistent := isNotPersistent
+			if n.Op == OPNEW {
+				persistent = isPersistent
+			}
+			n = callnew(n.Type.Elem(), persistent)
 		}
 
 	case OADDSTR:
@@ -1425,7 +1429,7 @@ opswitch:
 			if n.Esc == EscNone && len(sc) <= maxImplicitStackVarSize {
 				a = nod(OADDR, temp(t), nil)
 			} else {
-				a = callnew(t)
+				a = callnew(t, isNotPersistent)
 			}
 			p := temp(t.PtrTo()) // *[n]byte
 			init.Append(typecheck(nod(OAS, p, a), Etop))
@@ -1954,12 +1958,17 @@ func walkprint(nn *Node, init *Nodes) *Node {
 	return r
 }
 
-func callnew(t *types.Type) *Node {
+// The persistent parameter indicates if memory has to be allocated from
+// persistent heap or volatile heap.
+func callnew(t *types.Type, persistent int) *Node {
 	if t.NotInHeap() {
 		yyerror("%v is go:notinheap; heap allocation disallowed", t)
 	}
 	dowidth(t)
 	fn := syslook("newobject")
+	if persistent == isPersistent {
+		fn = syslook("pnewobject")
+	}
 	fn = substArgTypes(fn, t)
 	v := mkcall1(fn, types.NewPtr(t), nil, typename(t))
 	v.SetNonNil(true)
@@ -3859,6 +3868,7 @@ func candiscard(n *Node) bool {
 		OAND,
 		OANDNOT,
 		ONEW,
+		OPNEW,
 		ONOT,
 		OCOM,
 		OPLUS,

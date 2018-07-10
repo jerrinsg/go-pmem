@@ -1375,6 +1375,7 @@ func hascallchan(n *Node) bool {
 		OMAKE,
 		OPMAKE,
 		ONEW,
+		OPNEW,
 		OPANIC,
 		OPRINT,
 		OPRINTN,

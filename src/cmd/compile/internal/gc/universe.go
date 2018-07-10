@@ -59,6 +59,7 @@ var builtinFuncs = [...]struct {
 	{"make", OMAKE},
 	{"pmake", OPMAKE},
 	{"new", ONEW},
+	{"pnew", OPNEW},
 	{"panic", OPANIC},
 	{"print", OPRINT},
 	{"println", OPRINTN},
