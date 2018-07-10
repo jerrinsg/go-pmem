@@ -1221,6 +1221,17 @@ func newobject(typ *_type) unsafe.Pointer {
 	return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
 }
 
+// Caveat: calling pnew() in go code does not guarantee that the object will be
+// allocated in persistent memory. Go does an escape analysis and if it finds that
+// the allocated pointer does not escape the local scope, then the object is
+// stack allocated.
+// pnewobject() could not be combined with newobject() by passing in an additional
+// 'persistent' argument. This due to some optimizations/checks that the go compiler
+// does. See cmd/compile/internal/ssa/gen/generic.rules
+func pnewobject(typ *_type) unsafe.Pointer {
+	return mallocgc(typ.size, typ, needZeroed, isPersistent)
+}
+
 //go:linkname reflect_unsafe_New reflect.unsafe_New
 func reflect_unsafe_New(typ *_type) unsafe.Pointer {
 	return mallocgc(typ.size, typ, needZeroed, isNotPersistent)

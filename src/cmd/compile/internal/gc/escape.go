@@ -510,7 +510,7 @@ func (e *Escape) exprSkipInit(k EscHole, n *Node) {
 	case OCALLMETH, OCALLFUNC, OCALLINTER, OLEN, OCAP, OCOMPLEX, OREAL, OIMAG, OAPPEND, OCOPY:
 		e.call([]EscHole{k}, n, nil)
 
-	case ONEW:
+	case ONEW, OPNEW:
 		e.spill(k, n)
 
 	case OMAKESLICE, OPMAKESLICE:

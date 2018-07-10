@@ -1850,7 +1850,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 
 		n.Type = t
 
-	case ONEW:
+	case ONEW, OPNEW:
 		ok |= ctxExpr
 		args := n.List
 		if args.Len() == 0 {
@@ -2261,6 +2261,7 @@ func checkdefergo(n *Node) {
 		OMAKECHAN,
 		OMAKEMAP,
 		ONEW,
+		OPNEW,
 		OREAL,
 		OLITERAL: // conversion or unsafe.Alignof, Offsetof, Sizeof
 		if n.Left.Orig != nil && n.Left.Orig.Op == OCONV {

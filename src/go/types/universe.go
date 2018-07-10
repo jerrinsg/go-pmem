@@ -138,6 +138,7 @@ const (
 
 	// persistent memory support
 	_Pmake
+	_Pnew
 )
 
 var predeclaredFuncs = [...]struct {
@@ -170,6 +171,7 @@ var predeclaredFuncs = [...]struct {
 	_Trace:  {"trace", 0, true, statement},
 
 	_Pmake: {"pmake", 1, true, expression},
+	_Pnew:  {"pnew", 1, false, expression},
 }
 
 func defPredeclaredFuncs() {

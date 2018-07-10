@@ -183,7 +183,7 @@ func mustHeapAlloc(n *Node) bool {
 		return true
 	}
 
-	if (n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize {
+	if (n.Op == ONEW || n.Op == OPNEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize {
 		return true
 	}
 

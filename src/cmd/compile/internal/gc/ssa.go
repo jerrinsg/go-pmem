@@ -84,6 +84,7 @@ func initssaconfig() {
 	msanread = sysfunc("msanread")
 	msanwrite = sysfunc("msanwrite")
 	newobject = sysfunc("newobject")
+	pnewobject = sysfunc("pnewobject")
 	newproc = sysfunc("newproc")
 	panicdivide = sysfunc("panicdivide")
 	panicdottypeE = sysfunc("panicdottypeE")
@@ -2750,12 +2751,17 @@ func (s *state) expr(n *Node) *ssa.Value {
 		}
 		return s.zeroVal(n.Type)
 
-	case ONEWOBJ:
+	// jerrin TODO XXX check this
+	case ONEWOBJ, OPNEWOBJ:
 		if n.Type.Elem().Size() == 0 {
 			return s.newValue1A(ssa.OpAddr, n.Type, zerobaseSym, s.sb)
 		}
 		typ := s.expr(n.Left)
-		vv := s.rtcall(newobject, true, []*types.Type{n.Type}, typ)
+		fn := newobject
+		if n.Op == OPNEWOBJ {
+			fn = pnewobject
+		}
+		vv := s.rtcall(fn, true, []*types.Type{n.Type}, typ)
 		return vv[0]
 
 	default:

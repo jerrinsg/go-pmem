@@ -7,6 +7,7 @@ var builtins = [...]struct {
 	abi  int
 }{
 	{"runtime.newobject", 1},
+	{"runtime.pnewobject", 1},
 	{"runtime.mallocgc", 1},
 	{"runtime.panicdivide", 1},
 	{"runtime.panicshift", 1},

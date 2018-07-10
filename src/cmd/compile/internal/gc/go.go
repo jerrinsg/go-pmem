@@ -303,6 +303,7 @@ var (
 	msanread,
 	msanwrite,
 	newobject,
+	pnewobject,
 	newproc,
 	panicdivide,
 	panicshift,

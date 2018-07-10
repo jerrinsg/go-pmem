@@ -193,7 +193,7 @@ func walkstmt(n *Node) *Node {
 				yyerror("%v escapes to heap, not allowed in runtime", v)
 			}
 			if prealloc[v] == nil {
-				prealloc[v] = callnew(v.Type)
+				prealloc[v] = callnew(v.Type, isNotPersistent)
 			}
 			nn := nod(OAS, v.Name.Param.Heapaddr, prealloc[v])
 			nn.SetColas(true)
@@ -481,7 +481,7 @@ opswitch:
 		Dump("walk", n)
 		Fatalf("walkexpr: switch 1 unknown op %+S", n)
 
-	case ONONAME, OEMPTY, OGETG, ONEWOBJ:
+	case ONONAME, OEMPTY, OGETG, ONEWOBJ, OPNEWOBJ:
 
 	case OTYPE, ONAME, OLITERAL:
 		// TODO(mdempsky): Just return n; see discussion on CL 38655.
@@ -1168,13 +1168,13 @@ opswitch:
 			n = reduceSlice(n)
 		}
 
-	case ONEW:
+	case ONEW, OPNEW:
 		if n.Type.Elem().NotInHeap() {
 			yyerror("%v can't be allocated in Go; it is incomplete (or unallocatable)", n.Type.Elem())
 		}
 		if n.Esc == EscNone {
 			if n.Type.Elem().Width >= maxImplicitStackVarSize {
-				Fatalf("large ONEW with EscNone: %v", n)
+				Fatalf("large ONEW/OPNEW with EscNone: %v", n)
 			}
 			r := temp(n.Type.Elem())
 			r = nod(OAS, r, nil) // zero temp
@@ -1184,7 +1184,11 @@ opswitch:
 			r = typecheck(r, ctxExpr)
 			n = r
 		} else {
-			n = callnew(n.Type.Elem())
+			memtype := isNotPersistent
+			if n.Op == OPNEW {
+				memtype = isPersistent
+			}
+			n = callnew(n.Type.Elem(), memtype)
 		}
 
 	case OADDSTR:
@@ -1524,7 +1528,7 @@ opswitch:
 			if n.Esc == EscNone && len(sc) <= int(maxImplicitStackVarSize) {
 				a = nod(OADDR, temp(t), nil)
 			} else {
-				a = callnew(t)
+				a = callnew(t, isNotPersistent)
 			}
 			p := temp(t.PtrTo()) // *[n]byte
 			init.Append(typecheck(nod(OAS, p, a), ctxStmt))
@@ -2033,9 +2037,12 @@ func walkprint(nn *Node, init *Nodes) *Node {
 	return r
 }
 
-func callnew(t *types.Type) *Node {
+func callnew(t *types.Type, memtype int) *Node {
 	dowidth(t)
 	n := nod(ONEWOBJ, typename(t), nil)
+	if memtype == isPersistent {
+		n = nod(OPNEWOBJ, typename(t), nil)
+	}
 	n.Type = types.NewPtr(t)
 	n.SetTypecheck(1)
 	n.MarkNonNil()
@@ -3812,6 +3819,7 @@ func candiscard(n *Node) bool {
 		OAND,
 		OANDNOT,
 		ONEW,
+		OPNEW,
 		ONOT,
 		OBITNOT,
 		OPLUS,
