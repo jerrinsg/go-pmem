@@ -16,6 +16,12 @@ import (
 // The constant is known to runtime.
 const tmpstringbufsize = 32
 
+// Constants related to persistent memory management
+const (
+	isNotPersistent = 0
+	isPersistent    = 1
+)
+
 func walk(fn *Node) {
 	Curfn = fn
 
@@ -339,7 +345,7 @@ func walkstmt(n *Node) *Node {
 }
 
 func isSmallMakeSlice(n *Node) bool {
-	if n.Op != OMAKESLICE {
+	if n.Op != OMAKESLICE && n.Op != OPMAKESLICE {
 		return false
 	}
 	l := n.Left
@@ -1295,7 +1301,7 @@ opswitch:
 			n = mkcall1(fn, n.Type, init, typename(n.Type), conv(hint, argtype), h)
 		}
 
-	case OMAKESLICE:
+	case OMAKESLICE, OPMAKESLICE:
 		l := n.Left
 		r := n.Right
 		if r == nil {
@@ -1332,6 +1338,13 @@ opswitch:
 			len, cap := l, r
 
 			fnname := "makeslice64"
+			// The persistent parameter indicates if memory has to be allocated
+			// from volatile memory or persistent memory. The parameter to be
+			// passed to mkcall1 has to be a *Node.
+			persistent := nodintconst(int64(isNotPersistent))
+			if n.Op == OPMAKESLICE {
+				persistent = nodintconst(int64(isPersistent))
+			}
 			argtype := types.Types[TINT64]
 
 			// Type checking guarantees that TIDEAL len/cap are positive and fit in an int.
@@ -1344,7 +1357,7 @@ opswitch:
 			}
 
 			fn := syslook(fnname)
-			n.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype))
+			n.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype), persistent)
 			n.Left.SetNonNil(true)
 			n.List.Set2(conv(len, types.Types[TINT]), conv(cap, types.Types[TINT]))
 			n.Op = OSLICEHEADER
@@ -2738,7 +2751,7 @@ func isAppendOfMake(n *Node) bool {
 	}
 
 	second := n.List.Second()
-	if second.Op != OMAKESLICE || second.Right != nil {
+	if (second.Op != OMAKESLICE && second.Op != OPMAKESLICE) || second.Right != nil {
 		return false
 	}
 
@@ -3876,7 +3889,7 @@ func candiscard(n *Node) bool {
 		return false
 
 		// Difficult to tell what sizes are okay.
-	case OMAKESLICE:
+	case OMAKESLICE, OPMAKESLICE:
 		return false
 	}
 

@@ -1837,7 +1837,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 			}
 		}
 
-	case OMAKE:
+	case OMAKE, OPMAKE:
 		ok |= Erv
 		args := n.List.Slice()
 		if len(args) == 0 {
@@ -1896,6 +1896,9 @@ func typecheck1(n *Node, top int) (res *Node) {
 			n.Left = l
 			n.Right = r
 			n.Op = OMAKESLICE
+			if n.Op == OPMAKE {
+				n.Op = OPMAKESLICE
+			}
 
 		case TMAP:
 			if i < len(args) {
@@ -2318,7 +2321,9 @@ func checkdefergo(n *Node) {
 		OIMAG,
 		OLEN,
 		OMAKE,
+		OPMAKE,
 		OMAKESLICE,
+		OPMAKESLICE,
 		OMAKECHAN,
 		OMAKEMAP,
 		ONEW,

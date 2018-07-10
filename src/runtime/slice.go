@@ -31,7 +31,9 @@ func panicmakeslicecap() {
 	panic(errorString("makeslice: cap out of range"))
 }
 
-func makeslice(et *_type, len, cap int) unsafe.Pointer {
+// The persistent parameter indicates if memory has to be allocated from volatile
+// memory or persistent memory.
+func makeslice(et *_type, len, cap int, persistent int) unsafe.Pointer {
 	mem, overflow := math.MulUintptr(et.size, uintptr(cap))
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		// NOTE: Produce a 'len out of range' error instead of a
@@ -46,10 +48,10 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
-	return mallocgc(mem, et, needZeroed, isNotPersistent)
+	return mallocgc(mem, et, needZeroed, persistent)
 }
 
-func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
+func makeslice64(et *_type, len64, cap64 int64, persistent int) unsafe.Pointer {
 	len := int(len64)
 	if int64(len) != len64 {
 		panicmakeslicelen()
@@ -60,7 +62,7 @@ func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
-	return makeslice(et, len, cap)
+	return makeslice(et, len, cap, persistent)
 }
 
 // growslice handles slice growth during append.
