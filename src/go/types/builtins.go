@@ -55,7 +55,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 				return
 			}
 		}
-	case _Make, _New, _Offsetof, _Trace, _Pmake:
+	case _Make, _New, _Offsetof, _Trace, _Pmake, _Pnew:
 		// arguments require special handling
 	}
 
@@ -458,7 +458,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 			check.recordBuiltinType(call.Fun, makeSig(x.typ, params[:1+len(sizes)]...))
 		}
 
-	case _New:
+	case _New, _Pnew:
 		// new(T)
 		// (no argument evaluated yet)
 		T := check.typ(call.Args[0])

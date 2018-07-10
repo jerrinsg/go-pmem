@@ -1152,6 +1152,7 @@ func (o *Order) expr(n, lhs *Node) *Node {
 		OMAKESLICE,
 		OPMAKESLICE,
 		ONEW,
+		OPNEW,
 		OREAL,
 		ORECOVER,
 		OSTR2BYTES,

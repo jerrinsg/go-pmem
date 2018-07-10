@@ -798,7 +798,7 @@ func (e *EscState) esc(n *Node, parent *Node) {
 	// gathered here.
 	if n.Esc != EscHeap && n.Type != nil &&
 		(n.Type.Width > maxStackVarSize ||
-			(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
+			(n.Op == ONEW || n.Op == OPNEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
 			(n.Op == OMAKESLICE || n.Op == OPMAKESLICE) && !isSmallMakeSlice(n)) {
 		// isSmallMakeSlice returns false for non-constant len/cap.
 		// If that's the case, print a more accurate escape reason.
@@ -1085,6 +1085,7 @@ opSwitch:
 		OMAKESLICE,
 		OPMAKESLICE,
 		ONEW,
+		OPNEW,
 		ORUNES2STR,
 		OBYTES2STR,
 		OSTR2RUNES,
@@ -1264,6 +1265,7 @@ func (e *EscState) escassign(dst, src *Node, step *EscStep) {
 		OSTR2BYTES,
 		OADDSTR,
 		ONEW,
+		OPNEW,
 		OCALLPART,
 		ORUNESTR,
 		OCONVIFACE:
@@ -2098,6 +2100,7 @@ func (e *EscState) escwalkBody(level Level, dst *Node, src *Node, step *EscStep,
 		OADDSTR,
 		OMAPLIT,
 		ONEW,
+		OPNEW,
 		OCLOSURE,
 		OCALLPART,
 		ORUNESTR,
