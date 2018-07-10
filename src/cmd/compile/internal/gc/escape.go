@@ -513,7 +513,7 @@ func (e *Escape) exprSkipInit(k EscHole, n *Node) {
 	case ONEW:
 		e.spill(k, n)
 
-	case OMAKESLICE:
+	case OMAKESLICE, OPMAKESLICE:
 		e.spill(k, n)
 		e.discard(n.Left)
 		e.discard(n.Right)
@@ -1053,7 +1053,7 @@ func (e *Escape) newLoc(n *Node, transient bool) *EscLocation {
 
 		if mustHeapAlloc(n) {
 			why := "too large for stack"
-			if n.Op == OMAKESLICE && (!Isconst(n.Left, CTINT) || !Isconst(n.Right, CTINT)) {
+			if (n.Op == OMAKESLICE || n.Op == OPMAKESLICE) && (!Isconst(n.Left, CTINT) || !Isconst(n.Right, CTINT)) {
 				why = "non-constant size"
 			}
 			e.flow(e.heapHole().addr(n, why), loc)

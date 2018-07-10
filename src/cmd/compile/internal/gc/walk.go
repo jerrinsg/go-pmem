@@ -343,7 +343,7 @@ func walkstmt(n *Node) *Node {
 }
 
 func isSmallMakeSlice(n *Node) bool {
-	if n.Op != OMAKESLICE {
+	if n.Op != OMAKESLICE && n.Op != OPMAKESLICE {
 		return false
 	}
 	r := n.Right
@@ -1332,7 +1332,7 @@ opswitch:
 			n = mkcall1(fn, n.Type, init, typename(n.Type), conv(hint, argtype), h)
 		}
 
-	case OMAKESLICE:
+	case OMAKESLICE, OPMAKESLICE:
 		l := n.Left
 		r := n.Right
 		if r == nil {
@@ -1387,6 +1387,13 @@ opswitch:
 			len, cap := l, r
 
 			fnname := "makeslice64"
+			// The memtype parameter indicates if memory has to be allocated
+			// from volatile memory or persistent memory. The parameter to be
+			// passed to mkcall1 has to be a *Node.
+			memtype := nodintconst(int64(isNotPersistent))
+			if n.Op == OPMAKESLICE {
+				memtype = nodintconst(int64(isPersistent))
+			}
 			argtype := types.Types[TINT64]
 
 			// Type checking guarantees that TIDEAL len/cap are positive and fit in an int.
@@ -1402,7 +1409,7 @@ opswitch:
 			m.Type = t
 
 			fn := syslook(fnname)
-			m.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype))
+			m.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype), memtype)
 			m.Left.MarkNonNil()
 			m.List.Set2(conv(len, types.Types[TINT]), conv(cap, types.Types[TINT]))
 
@@ -2829,7 +2836,7 @@ func isAppendOfMake(n *Node) bool {
 	}
 
 	second := n.List.Second()
-	if second.Op != OMAKESLICE || second.Right != nil {
+	if (second.Op != OMAKESLICE && second.Op != OPMAKESLICE) || second.Right != nil {
 		return false
 	}
 
@@ -3835,7 +3842,7 @@ func candiscard(n *Node) bool {
 		return false
 
 		// Difficult to tell what sizes are okay.
-	case OMAKESLICE:
+	case OMAKESLICE, OPMAKESLICE:
 		return false
 
 	case OMAKESLICECOPY:

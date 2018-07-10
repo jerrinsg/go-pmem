@@ -184,6 +184,7 @@ var goopnames = []string{
 	OLSH:      "<<",
 	OLT:       "<",
 	OMAKE:     "make",
+	OPMAKE:    "pmake",
 	ONEG:      "-",
 	OMOD:      "%",
 	OMUL:      "*",
@@ -1197,8 +1198,10 @@ var opprec = []int{
 	OLEN:           8,
 	OLITERAL:       8,
 	OMAKESLICE:     8,
+	OPMAKESLICE:    8,
 	OMAKESLICECOPY: 8,
 	OMAKE:          8,
+	OPMAKE:         8,
 	OMAPLIT:        8,
 	ONAME:          8,
 	ONEW:           8,
@@ -1543,6 +1546,7 @@ func (n *Node) exprfmt(s fmt.State, prec int, mode fmtMode) {
 		ODELETE,
 		OLEN,
 		OMAKE,
+		OPMAKE,
 		ONEW,
 		OPANIC,
 		ORECOVER,
@@ -1569,7 +1573,7 @@ func (n *Node) exprfmt(s fmt.State, prec int, mode fmtMode) {
 		}
 		mode.Fprintf(s, "(%.v)", n.List)
 
-	case OMAKEMAP, OMAKECHAN, OMAKESLICE:
+	case OMAKEMAP, OMAKECHAN, OMAKESLICE, OPMAKESLICE:
 		if n.List.Len() != 0 { // pre-typecheck
 			mode.Fprintf(s, "make(%v, %.v)", n.Type, n.List)
 			return
@@ -1578,7 +1582,7 @@ func (n *Node) exprfmt(s fmt.State, prec int, mode fmtMode) {
 			mode.Fprintf(s, "make(%v, %v, %v)", n.Type, n.Left, n.Right)
 			return
 		}
-		if n.Left != nil && (n.Op == OMAKESLICE || !n.Left.Type.IsUntyped()) {
+		if n.Left != nil && (n.Op == OMAKESLICE || n.Op == OPMAKESLICE || !n.Left.Type.IsUntyped()) {
 			mode.Fprintf(s, "make(%v, %v)", n.Type, n.Left)
 			return
 		}

@@ -194,7 +194,7 @@ func mustHeapAlloc(n *Node) bool {
 		return true
 	}
 
-	if n.Op == OMAKESLICE && !isSmallMakeSlice(n) {
+	if (n.Op == OMAKESLICE || n.Op == OPMAKESLICE) && !isSmallMakeSlice(n) {
 		return true
 	}
 

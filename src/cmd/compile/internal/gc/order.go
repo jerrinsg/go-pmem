@@ -349,6 +349,8 @@ func orderMakeSliceCopy(s []*Node) {
 		return
 	}
 	maken := asn.Right
+
+	// TODO jerrin slicecopy may need to be supported
 	if maken == nil || maken.Op != OMAKESLICE {
 		return
 	}
@@ -1214,6 +1216,7 @@ func (o *Order) expr(n, lhs *Node) *Node {
 		OMAKECHAN,
 		OMAKEMAP,
 		OMAKESLICE,
+		OPMAKESLICE,
 		OMAKESLICECOPY,
 		ONEW,
 		OREAL,

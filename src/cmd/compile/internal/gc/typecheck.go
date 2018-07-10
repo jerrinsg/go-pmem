@@ -1724,7 +1724,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 			}
 		}
 
-	case OMAKE:
+	case OMAKE, OPMAKE:
 		ok |= ctxExpr
 		args := n.List.Slice()
 		if len(args) == 0 {
@@ -1782,9 +1782,19 @@ func typecheck1(n *Node, top int) (res *Node) {
 
 			n.Left = l
 			n.Right = r
-			n.Op = OMAKESLICE
+			if n.Op == OMAKE {
+				n.Op = OMAKESLICE
+			} else {
+				n.Op = OPMAKESLICE
+			}
 
 		case TMAP:
+			if n.Op == OPMAKE {
+				yyerror("creating a map in persistent memory not supported")
+				n.Type = nil
+				return n
+			}
+
 			if i < len(args) {
 				l = args[i]
 				i++
@@ -1805,6 +1815,11 @@ func typecheck1(n *Node, top int) (res *Node) {
 			n.Op = OMAKEMAP
 
 		case TCHAN:
+			if n.Op == OPMAKE {
+				yyerror("creating a channel in persistent memory not supported")
+				n.Type = nil
+				return n
+			}
 			l = nil
 			if i < len(args) {
 				l = args[i]
@@ -2240,7 +2255,9 @@ func checkdefergo(n *Node) {
 		OIMAG,
 		OLEN,
 		OMAKE,
+		OPMAKE,
 		OMAKESLICE,
+		OPMAKESLICE,
 		OMAKECHAN,
 		OMAKEMAP,
 		ONEW,

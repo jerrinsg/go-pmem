@@ -737,9 +737,11 @@ const (
 	OSTRUCTKEY     // Sym:Left (key:value in struct literal, after type checking)
 	OLEN           // len(Left)
 	OMAKE          // make(List) (before type checking converts to one of the following)
+	OPMAKE         // persistent memory version of make(List)
 	OMAKECHAN      // make(Type, Left) (type is chan)
 	OMAKEMAP       // make(Type, Left) (type is map)
 	OMAKESLICE     // make(Type, Left, Right) (type is slice)
+	OPMAKESLICE    // make(Type, Left, Right) (type is slice)
 	OMAKESLICECOPY // makeslicecopy(Type, Left, Right) (type is slice; Left is length and Right is the copied from slice)
 	// OMAKESLICECOPY is created by the order pass and corresponds to:
 	//  s = make(Type, Left); copy(s, Right)

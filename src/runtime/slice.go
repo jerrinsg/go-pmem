@@ -80,7 +80,9 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 	return to
 }
 
-func makeslice(et *_type, len, cap int) unsafe.Pointer {
+// The memtype parameter indicates if memory has to be allocated from volatile
+// memory or persistent memory.
+func makeslice(et *_type, len, cap int, memtype int) unsafe.Pointer {
 	mem, overflow := math.MulUintptr(et.size, uintptr(cap))
 	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		// NOTE: Produce a 'len out of range' error instead of a
@@ -95,10 +97,10 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
-	return mallocgc(mem, et, needZeroed, isNotPersistent)
+	return mallocgc(mem, et, needZeroed, memtype)
 }
 
-func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
+func makeslice64(et *_type, len64, cap64 int64, memtype int) unsafe.Pointer {
 	len := int(len64)
 	if int64(len) != len64 {
 		panicmakeslicelen()
@@ -109,7 +111,7 @@ func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
-	return makeslice(et, len, cap)
+	return makeslice(et, len, cap, memtype)
 }
 
 // growslice handles slice growth during append.
@@ -160,6 +162,11 @@ func growslice(et *_type, old slice, cap int) slice {
 				newcap = cap
 			}
 		}
+	}
+
+	memtype := isNotPersistent
+	if InPmem(uintptr(old.array)) {
+		memtype = isPersistent
 	}
 
 	var overflow bool
@@ -221,13 +228,13 @@ func growslice(et *_type, old slice, cap int) slice {
 
 	var p unsafe.Pointer
 	if et.ptrdata == 0 {
-		p = mallocgc(capmem, nil, doesntNeedZeroed, isNotPersistent)
+		p = mallocgc(capmem, nil, doesntNeedZeroed, memtype)
 		// The append() that calls growslice is going to overwrite from old.len to cap (which will be the new length).
 		// Only clear the part that will not be overwritten.
 		memclrNoHeapPointers(add(p, newlenmem), capmem-newlenmem)
 	} else {
 		// Note: can't use rawmem (which avoids zeroing of memory), because then GC can scan uninitialized memory.
-		p = mallocgc(capmem, et, needZeroed, isNotPersistent)
+		p = mallocgc(capmem, et, needZeroed, memtype)
 		if lenmem > 0 && writeBarrier.enabled {
 			// Only shade the pointers in old.array since we know the destination slice p
 			// only contains nil pointers because it has been cleared during alloc.

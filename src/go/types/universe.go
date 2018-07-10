@@ -135,6 +135,9 @@ const (
 	// testing support
 	_Assert
 	_Trace
+
+	// persistent memory support
+	_Pmake
 )
 
 var predeclaredFuncs = [...]struct {
@@ -165,6 +168,8 @@ var predeclaredFuncs = [...]struct {
 
 	_Assert: {"assert", 1, false, statement},
 	_Trace:  {"trace", 0, true, statement},
+
+	_Pmake: {"pmake", 1, true, expression},
 }
 
 func defPredeclaredFuncs() {

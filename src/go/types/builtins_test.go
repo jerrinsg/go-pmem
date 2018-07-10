@@ -93,6 +93,9 @@ var builtinCalls = []struct {
 	{"panic", `panic(0)`, `func(interface{})`},
 	{"panic", `panic("foo")`, `func(interface{})`},
 
+	{"pmake", `_ = pmake([]int, 10)`, `func([]int, int) []int`},
+	{"pmake", `type T []byte; _ = pmake(T, 10, 20)`, `func(p.T, int, int) p.T`},
+
 	{"print", `print()`, `func()`},
 	{"print", `print(0)`, `func(int)`},
 	{"print", `print(1, 2.0, "foo", true)`, `func(int, float64, string, bool)`},
