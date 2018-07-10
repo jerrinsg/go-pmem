@@ -324,6 +324,7 @@ func callrecv(n *Node) bool {
 		OLEN,
 		OCOPY,
 		ONEW,
+		OPNEW,
 		OAPPEND,
 		ODELETE:
 		return true
@@ -1963,7 +1964,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 
 		n.Type = t
 
-	case ONEW:
+	case ONEW, OPNEW:
 		ok |= Erv
 		args := n.List
 		if args.Len() == 0 {
@@ -2339,6 +2340,7 @@ func checkdefergo(n *Node) {
 		OMAKECHAN,
 		OMAKEMAP,
 		ONEW,
+		OPNEW,
 		OREAL,
 		OLITERAL: // conversion or unsafe.Alignof, Offsetof, Sizeof
 		if n.Left.Orig != nil && n.Left.Orig.Op == OCONV {

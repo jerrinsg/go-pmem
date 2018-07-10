@@ -670,6 +670,7 @@ const (
 	OAND         // Left & Right
 	OANDNOT      // Left &^ Right
 	ONEW         // new(Left)
+	OPNEW        // new(Left)
 	ONOT         // !Left
 	OCOM         // ^Left
 	OPLUS        // +Left
