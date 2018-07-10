@@ -57,6 +57,7 @@ var builtinFuncs = [...]struct {
 	{"imag", OIMAG},
 	{"len", OLEN},
 	{"make", OMAKE},
+	{"pmake", OPMAKE},
 	{"new", ONEW},
 	{"panic", OPANIC},
 	{"print", OPRINT},

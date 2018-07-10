@@ -799,11 +799,12 @@ func (e *EscState) esc(n *Node, parent *Node) {
 	if n.Esc != EscHeap && n.Type != nil &&
 		(n.Type.Width > maxStackVarSize ||
 			(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
-			n.Op == OMAKESLICE && !isSmallMakeSlice(n)) {
+			(n.Op == OMAKESLICE || n.Op == OPMAKESLICE) && !isSmallMakeSlice(n)) {
 		// isSmallMakeSlice returns false for non-constant len/cap.
 		// If that's the case, print a more accurate escape reason.
 		var msgVerb, escapeMsg string
-		if n.Op == OMAKESLICE && (!Isconst(n.Left, CTINT) || !Isconst(n.Right, CTINT)) {
+		if (n.Op == OMAKESLICE || n.Op == OPMAKESLICE) &&
+			(!Isconst(n.Left, CTINT) || !Isconst(n.Right, CTINT)) {
 			msgVerb, escapeMsg = "has ", "non-constant size"
 		} else {
 			msgVerb, escapeMsg = "is ", "too large for stack"
@@ -1082,6 +1083,7 @@ opSwitch:
 	case OMAKECHAN,
 		OMAKEMAP,
 		OMAKESLICE,
+		OPMAKESLICE,
 		ONEW,
 		ORUNES2STR,
 		OBYTES2STR,
@@ -1255,6 +1257,7 @@ func (e *EscState) escassign(dst, src *Node, step *EscStep) {
 		OMAKECHAN,
 		OMAKEMAP,
 		OMAKESLICE,
+		OPMAKESLICE,
 		ORUNES2STR,
 		OBYTES2STR,
 		OSTR2RUNES,
@@ -2087,6 +2090,7 @@ func (e *EscState) escwalkBody(level Level, dst *Node, src *Node, step *EscStep,
 	case OMAKECHAN,
 		OMAKEMAP,
 		OMAKESLICE,
+		OPMAKESLICE,
 		ORUNES2STR,
 		OBYTES2STR,
 		OSTR2RUNES,

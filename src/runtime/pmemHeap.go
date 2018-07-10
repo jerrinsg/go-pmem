@@ -2,6 +2,13 @@ package runtime
 
 import "unsafe"
 
+// Constants representing possible persistent memory initialization states
+const (
+	initNotDone = iota // Persistent memory not initialiazed
+	initOngoing        // Persistent memory initialization ongoing
+	initDone           // Persistent memory initialization completed
+)
+
 const (
 	isNotPersistent = 0
 	isPersistent    = 1
@@ -46,4 +53,9 @@ var pmemInfo struct {
 
 	// A lock to protect modifications to the root pointer
 	rootLock mutex
+}
+// InPmem checks whether 'addr' is an address in the persistent memory range
+func InPmem(addr uintptr) bool {
+	// TODO
+	return false
 }

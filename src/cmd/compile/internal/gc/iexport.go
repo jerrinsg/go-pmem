@@ -1258,7 +1258,7 @@ func (w *exportWriter) expr(n *Node) {
 		w.expr(n.Left)
 		w.typ(n.Type)
 
-	case OREAL, OIMAG, OAPPEND, OCAP, OCLOSE, ODELETE, OLEN, OMAKE, ONEW, OPANIC, ORECOVER, OPRINT, OPRINTN:
+	case OREAL, OIMAG, OAPPEND, OCAP, OCLOSE, ODELETE, OLEN, OMAKE, ONEW, OPANIC, OPMAKE, ORECOVER, OPRINT, OPRINTN:
 		w.op(op)
 		w.pos(n.Pos)
 		if n.Left != nil {
@@ -1281,7 +1281,7 @@ func (w *exportWriter) expr(n *Node) {
 		w.exprList(n.List)
 		w.bool(n.IsDDD())
 
-	case OMAKEMAP, OMAKECHAN, OMAKESLICE:
+	case OMAKEMAP, OMAKECHAN, OMAKESLICE, OPMAKESLICE:
 		w.op(op) // must keep separate from OMAKE for importer
 		w.pos(n.Pos)
 		w.typ(n.Type)
@@ -1295,7 +1295,7 @@ func (w *exportWriter) expr(n *Node) {
 			w.expr(n.Left)
 			w.expr(n.Right)
 			w.op(OEND)
-		case n.Left != nil && (n.Op == OMAKESLICE || !n.Left.Type.IsUntyped()):
+		case n.Left != nil && (n.Op == OMAKESLICE || n.Op == OPMAKESLICE || !n.Left.Type.IsUntyped()):
 			w.expr(n.Left)
 			w.op(OEND)
 		}

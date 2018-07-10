@@ -895,7 +895,7 @@ func (r *importReader) node() *Node {
 		n.Type = r.typ()
 		return n
 
-	case OCOPY, OCOMPLEX, OREAL, OIMAG, OAPPEND, OCAP, OCLOSE, ODELETE, OLEN, OMAKE, ONEW, OPANIC, ORECOVER, OPRINT, OPRINTN:
+	case OCOPY, OCOMPLEX, OREAL, OIMAG, OAPPEND, OCAP, OCLOSE, ODELETE, OLEN, OMAKE, ONEW, OPANIC, OPMAKE, ORECOVER, OPRINT, OPRINTN:
 		n := npos(r.pos(), builtinCall(op))
 		n.List.Set(r.exprList())
 		if op == OAPPEND {
@@ -912,8 +912,12 @@ func (r *importReader) node() *Node {
 		n.SetIsDDD(r.bool())
 		return n
 
-	case OMAKEMAP, OMAKECHAN, OMAKESLICE:
-		n := npos(r.pos(), builtinCall(OMAKE))
+	case OMAKEMAP, OMAKECHAN, OMAKESLICE, OPMAKESLICE:
+		opn := OMAKE
+		if op == OPMAKESLICE {
+			opn = OPMAKE
+		}
+		n := npos(r.pos(), builtinCall(opn))
 		n.List.Append(typenod(r.typ()))
 		n.List.Append(r.exprList()...)
 		return n
