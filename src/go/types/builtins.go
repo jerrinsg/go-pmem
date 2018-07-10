@@ -55,7 +55,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 				return
 			}
 		}
-	case _Make, _New, _Offsetof, _Trace:
+	case _Make, _New, _Offsetof, _Trace, _Pmake:
 		// arguments require special handling
 	}
 
@@ -417,9 +417,9 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 
 		x.typ = resTyp
 
-	case _Make:
-		// make(T, n)
-		// make(T, n, m)
+	case _Make, _Pmake:
+		// make(T, n) or pmake(T, n)
+		// make(T, n, m) or pmake(T, n, m)
 		// (no argument evaluated yet)
 		arg0 := call.Args[0]
 		T := check.typ(arg0)
