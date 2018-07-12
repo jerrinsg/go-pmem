@@ -504,6 +504,7 @@ func readGCStats_m(pauses *[]uint64) {
 }
 
 // stats are currently supported only for volatile memory.
+// todo support stats for persistent memory
 //go:nowritebarrier
 func updatememstats() {
 	memstats.mcache_inuse = uint64(mheap_.cachealloc.inuse)

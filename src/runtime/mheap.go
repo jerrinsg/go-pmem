@@ -33,9 +33,9 @@ type mheap struct {
 	// The data members below have been extended to be an array of length 2,
 	// where index 0 and index 1 holds the metadata corresponding to volatile
 	// memory and persistent memory respectively.
-	free [2]mTreap    // free and non-scavenged spans
-	scav [2]mTreap    // free and scavenged spans
-	busy [2]mSpanList // busy list of spans
+	free [maxMemTypes]mTreap    // free and non-scavenged spans
+	scav [maxMemTypes]mTreap    // free and scavenged spans
+	busy [maxMemTypes]mSpanList // busy list of spans
 
 	sweepgen  uint32 // sweep generation, see comment in mspan
 	sweepdone uint32 // all spans are swept
@@ -146,7 +146,7 @@ type mheap struct {
 	// central is indexed by spanClass.
 	// central[0] stores the central free lists for volatile memory and
 	// central[1] stores the central free lists for persistent memory.
-	central [2][numSpanClasses]struct {
+	central [maxMemTypes][numSpanClasses]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}

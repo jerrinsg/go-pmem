@@ -33,17 +33,17 @@ type mcache struct {
 	// termination.
 	// tiny[0] is the heap pointer for volatile memory and tiny[1] is the heap
 	// pointer for persistent memory.
-	tiny [2]uintptr
+	tiny [maxMemTypes]uintptr
 	// tinyoffset[0] is the tiny offset for volatile memory and tinyoffset[1] is
 	// the tiny offset for persistent memory.
-	tinyoffset       [2]uintptr
+	tinyoffset       [maxMemTypes]uintptr
 	local_tinyallocs uintptr // number of tiny allocs not counted in other stats
 
 	// The rest is not accessed on every malloc.
 
 	// alloc[0] is the cache of spans for volatile memory and alloc[1] is the
 	// cache of spans for persistent memory.
-	alloc [2][numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
+	alloc [maxMemTypes][numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
 	stackcache [_NumStackOrders]stackfreelist
 
