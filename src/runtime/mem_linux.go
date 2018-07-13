@@ -174,6 +174,7 @@ func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, persistent int) {
 			// memory is already initialized, we have then run out of persistent memory.
 			throw("sysMapP(): Out of memory")
 		}
+
 		// MAP_SYNC flag is supported only for files that support DAX (direct
 		// mapping of persistent memory). Mapping other files with this flag will
 		// fail with EOPNOTSUPP.
