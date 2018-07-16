@@ -781,6 +781,10 @@ func (c *mcache) nextFree(spc spanClass, persistent int) (v gclinkptr, s *mspan,
 // The persistent parameter indicates if memory has to be allocated
 // from volatile heap or persistent heap.
 func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Pointer {
+	if persistent == isPersistent && pmemInfo.initState != initDone {
+		throw("Allocation before initializing persistent memory")
+	}
+
 	if gcphase == _GCmarktermination {
 		throw("mallocgc called with gcphase == _GCmarktermination")
 	}
