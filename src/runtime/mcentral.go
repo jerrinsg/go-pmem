@@ -106,7 +106,7 @@ retry:
 	unlock(&c.lock)
 
 	// Replenish central list if empty.
-	s = c.grow()
+	s = c.grow(persistent)
 	if s == nil {
 		return nil
 	}
@@ -251,12 +251,12 @@ func (c *mcentral) freeSpan(s *mspan, preserve bool, wasempty bool) bool {
 }
 
 // grow allocates a new empty span from the heap and initializes it for c's size class.
-func (c *mcentral) grow() *mspan {
+func (c *mcentral) grow(persistent int) *mspan {
 	npages := uintptr(class_to_allocnpages[c.spanclass.sizeclass()])
 	size := uintptr(class_to_size[c.spanclass.sizeclass()])
 	n := (npages << _PageShift) / size
 
-	s := mheap_.alloc(npages, c.spanclass, false, needZeroed, isNotPersistent)
+	s := mheap_.alloc(npages, c.spanclass, false, needZeroed, persistent)
 	if s == nil {
 		return nil
 	}
