@@ -82,13 +82,15 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	}
 
 	if offset%pageSize != 0 {
-		println("Persistent memory initialization requires offset to be a multiple of page size")
+		println(`Persistent memory initialization requires offset to be a
+			multiple of page size`)
 		return nil
 	}
 
 	// Change persistent memory initialization state from not-done to ongoing
 	if !atomic.Cas(&pmemInfo.initState, initNotDone, initOngoing) {
-		println("Persistent memory is already initialized or initialization is ongoing")
+		println(`Persistent memory is already initialized or initialization is
+			ongoing`)
 		return nil
 	}
 
