@@ -949,7 +949,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 		if typ == deferType {
 			dataSize = unsafe.Sizeof(_defer{})
 		}
-		heapBitsSetType(uintptr(x), size, dataSize, typ)
+		heapBitsSetType(uintptr(x), size, dataSize, typ, persistent == isPersistent)
 		if dataSize > typ.size {
 			// Array allocation. If there are any
 			// pointers, GC has to scan to the last
