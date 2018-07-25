@@ -19,8 +19,7 @@ const (
 	// spanClass for a small allocation vary from 4 to 133. For a large
 	// allocation that uses 'npages' pages and has spanClass 'spc', the value
 	// recorded is: ((66+npages-4) << 2 | spc << 1 | s.needzero).
-	// A large span uses 5 or more number of pages, and its spanClass is always
-	// either 0 or 1.
+	// A large span uses 5 or more pages, and its spanClass is always 0 or 1.
 	logBytesPerPage = 4
 
 	// A magic constant that will be written to the first 8 bytes of the
