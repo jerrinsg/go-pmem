@@ -69,10 +69,18 @@ var pmemInfo struct {
 	// bits stored.
 	spanBitmap []uint32
 
+	// typeBitmap slice corresponds to the persistent memory region that stores
+	// the heap type bitmap log. Heap type bits are used by the garbage collector
+	// to identify what regions in the heap store pointer values.
+	typeBitmap []byte
+
 	// The start address of the persistent memory region which the runtime manages.
 	// This is obtained by adding the offset value and header region size to the
 	// address at which the persistent memory file is mapped.
 	startAddr uintptr
+
+	// The end address of the persistent memory region that the runtime manages.
+	endAddr uintptr
 }
 
 // Persistent memory initialization function.
@@ -120,7 +128,7 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	// Compute the size of the header section. The header section includes the
 	// span bitmap, the heap type bitmap, and 'pmemHdrSize' bytes to record the
 	// magic constant and persistent memory size.
-	heapTypeBitmapSize := availPages / heapBytesPerPage
+	heapTypeBitmapSize := availPages * heapBytesPerPage
 	spanBitmapSize := availPages * logBytesPerPage
 	headerSize := heapTypeBitmapSize + spanBitmapSize + pmemHdrSize
 
@@ -132,7 +140,7 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 		atomic.Store(&pmemInfo.initState, initNotDone)
 		return nil
 	}
-	pmemInfo.startAddr = (uintptr)(pmemMappedAddr) + reservePages>>pageShift
+	pmemInfo.startAddr = (uintptr)(pmemMappedAddr) + reservePages<<pageShift
 
 	// hdrAddr is the address of the header section in persistent memory
 	hdrAddr := unsafe.Pointer(uintptr(pmemMappedAddr) + uintptr(offset))
@@ -176,6 +184,15 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	// pmemInfo.spanBitmap is a slice with 'usablePages' number of entries,
 	// starting at address 'spanBitsAddr'
 	pmemInfo.spanBitmap = (*(*[1 << 28]uint32)(spanBitsAddr))[:usablePages]
+
+	// pmemInfo.typeBitmap is a slice with 'typeEntries' number of entries,
+	// starting at address 'typeBitsAddr'
+	typeEntries := (usablePages << pageShift) / 32
+	typeBitsAddr := unsafe.Pointer(uintptr(spanBitsAddr) + uintptr(spanBitmapSize))
+	pmemInfo.typeBitmap = (*(*[1 << 28]byte)(typeBitsAddr))[:typeEntries]
+
+	// The end address of the persistent memory region
+	pmemInfo.endAddr = pmemInfo.startAddr + (usablePages << pageShift) - 1
 
 	if !firstTime {
 		// TODO reconstruction
@@ -228,6 +245,10 @@ func growPmemRegion(npages, reservePages uintptr) unsafe.Pointer {
 
 // Function to log a span allocation.
 func logSpanAlloc(s *mspan) {
+	if s.persistent == isNotPersistent {
+		throw("Invalid span passed to logSpanAlloc")
+	}
+
 	// Index of the first page of this span within the persistent memory region
 	index := (s.base() - pmemInfo.startAddr) >> pageShift
 
@@ -263,6 +284,10 @@ func logSpanAlloc(s *mspan) {
 // Function to log that a span has been completely freed. This is done by
 // writing 0 to the bitmap entry corresponding to this span.
 func logSpanFree(s *mspan) {
+	if s.persistent == isNotPersistent {
+		throw("Invalid span passed to logSpanFree")
+	}
+
 	index := (s.base() - pmemInfo.startAddr) >> pageShift
 	logAddr := &pmemInfo.spanBitmap[index]
 
@@ -285,4 +310,46 @@ func spanLogValue(s *mspan) uint32 {
 		logVal = uintptr(s.spanclass)<<1 | uintptr(s.needzero)
 	}
 	return uint32(logVal)
+}
+
+// logHeapBits is used to log the heap type bits set by the memory allocator during
+// a persistent memory allocation request.
+// 'addr' is the start address of the allocated region.
+// The heap type bits to be copied from are between addresses 'startByte' and 'endByte.
+// This type bitmap will be restored during subsequent run of the program
+// and will help GC identify which addresses in the reconstructed persistent memory
+// region has pointers.
+func logHeapBits(addr uintptr, startByte, endByte *byte) {
+	if uintptr(unsafe.Pointer(endByte)) < uintptr(unsafe.Pointer(startByte)) {
+		throw("Invalid addresses passed to logHeapBits")
+	}
+
+	if !inPmem(addr) {
+		throw("Invalid heap type bits logging request")
+	}
+
+	offset := (addr - pmemInfo.startAddr) / 32
+	bitAddr := &pmemInfo.typeBitmap[offset]
+	sourceAddr := startByte
+
+	// From heapBitsSetType():
+	// There can only be one allocation from a given span active at a time,
+	// and the bitmap for a span always falls on byte boundaries,
+	// so there are no write-write races for access to the heap bitmap.
+	// Hence, heapBitsSetType can access the bitmap without atomics.
+	for {
+		*bitAddr = *sourceAddr
+		if sourceAddr == endByte {
+			break
+		}
+		bitAddr = add1(bitAddr)
+		sourceAddr = add1(sourceAddr)
+	}
+
+	// Todo persist the changes
+}
+
+// Function to check that 'addr' is an address in the persistent memory range
+func inPmem(addr uintptr) bool {
+	return addr >= pmemInfo.startAddr && addr <= pmemInfo.endAddr
 }
