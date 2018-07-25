@@ -14,9 +14,14 @@ const (
 	maxMemTypes = 2
 
 	// The number of bytes needed to log a span allocation in the span bitmap.
-	// The layout of the value logged will be explained when span logging
-	// is introduced.
-	logBytesPerSpan = 4
+	// To log allocation of a small span s, the value recorded is
+	// ((s.spanclass) << 1 | s.needzero).
+	// spanClass for a small allocation vary from 4 to 133. For a large
+	// allocation that uses 'npages' pages and has spanClass 'spc', the value
+	// recorded is: ((66+npages-4) << 2 | spc << 1 | s.needzero).
+	// A large span uses 5 or more number of pages, and its spanClass is always
+	// either 0 or 1.
+	logBytesPerPage = 4
 
 	// A magic constant that will be written to the first 8 bytes of the
 	// persistent memory region. This constant will then help to differentiate
@@ -58,6 +63,17 @@ var pmemInfo struct {
 	// Persistent memory initialization state
 	// This is used to prevent concurrent/multiple persistent memory initialization
 	initState uint32
+
+	// spanBitmap slice corresponds to the persistent memory region that stores
+	// the span bitmap log. It uses logBytesPerPage bytes to store the information
+	// about each page. See definition of logBytesPerPage for the layout of the
+	// bits stored.
+	spanBitmap []uint32
+
+	// The start address of the persistent memory region which the runtime manages.
+	// This is obtained by adding the offset value and header region size to the
+	// address at which the persistent memory file is mapped.
+	startAddr uintptr
 }
 
 // Persistent memory initialization function.
@@ -98,7 +114,7 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	// into memory in growPmemRegion().
 	pmemInfo.fname = fname
 
-	// Persistent memory size available to the allocator
+	// Persistent memory size excluding the offset
 	availSize := size - offset
 	availPages := availSize >> pageShift
 
@@ -106,7 +122,7 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	// span bitmap, the heap type bitmap, and 'pmemHdrSize' bytes to record the
 	// magic constant and persistent memory size.
 	heapTypeBitmapSize := availPages / heapBytesPerPage
-	spanBitmapSize := availPages * logBytesPerSpan
+	spanBitmapSize := availPages * logBytesPerPage
 	headerSize := heapTypeBitmapSize + spanBitmapSize + pmemHdrSize
 
 	reserveSize := uintptr(offset + headerSize)
@@ -117,6 +133,7 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 		atomic.Store(&pmemInfo.initState, initNotDone)
 		return nil
 	}
+	pmemInfo.startAddr = (uintptr)(pmemMappedAddr) + reservePages>>pageShift
 
 	// hdrAddr is the address of the header section in persistent memory
 	hdrAddr := unsafe.Pointer(uintptr(pmemMappedAddr) + uintptr(offset))
@@ -124,7 +141,6 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	addresses := (*[3]int)(hdrAddr)
 	magicAddr := &addresses[0]
 	sizeAddr := &addresses[1]
-	// addresses[2] will be used later
 
 	firstTime := false
 	// Read the first 8 bytes of header section to check for magic constant
@@ -154,6 +170,13 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 		// restarted before the header constant is written, then that run of the
 		// application will be considered as a first-time initialization.
 	}
+
+	// usablePages is the actual number of pages usable by the allocator
+	usablePages := totalPages - reservePages
+	spanBitsAddr := unsafe.Pointer(&addresses[2])
+	// pmemInfo.spanBitmap is a slice with 'usablePages' number of entries,
+	// starting at address 'spanBitsAddr'
+	pmemInfo.spanBitmap = (*(*[1 << 28]uint32)(spanBitsAddr))[:usablePages]
 
 	if !firstTime {
 		// TODO reconstruction
@@ -202,4 +225,65 @@ func growPmemRegion(npages, reservePages uintptr) unsafe.Pointer {
 	h.freeSpanLocked(s, false, true, 0)
 	unlock(&h.lock)
 	return v
+}
+
+// Function to log a span allocation.
+func logSpanAlloc(s *mspan) {
+	// Index of the first page of this span within the persistent memory region
+	index := (s.base() - pmemInfo.startAddr) >> pageShift
+
+	// The value that should be logged
+	logVal := spanLogValue(s)
+
+	// The address at which the span information should be logged
+	logAddr := &pmemInfo.spanBitmap[index]
+
+	bitmapVal := *logAddr
+	if bitmapVal != 0 {
+		// The span bitmap already has an entry corresponding to this span.
+		// We clear the span bitmap when a span is freed. Since the entry still
+		// exists, this means that the span is getting reused. Hence, the first
+		// 31 bits of the entry should match with the corresponding value to be
+		// logged. The last bit need not be the same as needzero bit can change
+		// as spans get reused.
+		// compare the first 31 bits
+		if bitmapVal>>1 != logVal>>1 {
+			throw("Logged span information mismatch")
+		}
+		// compare the last bit
+		if bitmapVal&1 == logVal&1 {
+			// all bits are equal, need not store the value again
+			return
+		}
+	}
+
+	atomic.Store(logAddr, logVal)
+	// todo persist the changes
+}
+
+// Function to log that a span has been completely freed. This is done by
+// writing 0 to the bitmap entry corresponding to this span.
+func logSpanFree(s *mspan) {
+	index := (s.base() - pmemInfo.startAddr) >> pageShift
+	logAddr := &pmemInfo.spanBitmap[index]
+
+	atomic.Store(logAddr, 0)
+	// todo persist the changes
+}
+
+// A helper function to compute the value that should be logged to record the
+// allocation of span s.
+// For a small span, the value logged is -
+// ((s.spc) << 1 | s.needzero) and for a large span the value logged is -
+// ((66+s.npages-4) << 2 | s.spc << 1 | s.needzero)
+// See definition of logBytesPerPage for more details.
+func spanLogValue(s *mspan) uint32 {
+	var logVal uintptr
+	if s.elemsize > maxSmallSize { // large allocation
+		npages := s.elemsize >> pageShift
+		logVal = (66+npages-4)<<2 | uintptr(s.spanclass)<<1 | uintptr(s.needzero)
+	} else {
+		logVal = uintptr(s.spanclass)<<1 | uintptr(s.needzero)
+	}
+	return uint32(logVal)
 }
