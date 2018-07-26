@@ -34,6 +34,7 @@
 #define SYS_exit		60
 #define SYS_kill		62
 #define SYS_fcntl		72
+#define SYS_ftruncate		77
 #define SYS_sigaltstack 	131
 #define SYS_arch_prctl		158
 #define SYS_gettid		186
@@ -126,6 +127,17 @@ TEXT runtime·fallocate(SB),NOSPLIT,$0-36
 	JLS	2(PC)
 	MOVL	$-1, AX
 	MOVL	AX, ret+32(FP)
+	RET
+
+TEXT runtime·ftruncate(SB),NOSPLIT,$0-20
+	MOVL	fd+0(FP), DI
+	MOVQ	len+8(FP), SI
+	MOVL	$SYS_ftruncate, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+16(FP)
 	RET
 
 TEXT runtime·fstat(SB),NOSPLIT,$0-20

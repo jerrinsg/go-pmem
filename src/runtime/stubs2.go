@@ -23,6 +23,7 @@ func usleep(usec uint32)
 //go:noescape
 func write(fd uintptr, p unsafe.Pointer, n int32) int32
 
+func ftruncate(fd, len uintptr) int32
 func fallocate(fd, mode, offset, len uintptr) int32
 func fstat(fd, stat uintptr) int32
 
