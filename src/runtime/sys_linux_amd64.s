@@ -15,6 +15,7 @@
 #define SYS_read		0
 #define SYS_write		1
 #define SYS_close		3
+#define SYS_fstat		5
 #define SYS_mmap		9
 #define SYS_munmap		11
 #define SYS_brk 		12
@@ -125,6 +126,17 @@ TEXT runtime·fallocate(SB),NOSPLIT,$0-36
 	JLS	2(PC)
 	MOVL	$-1, AX
 	MOVL	AX, ret+32(FP)
+	RET
+
+TEXT runtime·fstat(SB),NOSPLIT,$0-20
+	MOVL	fd+0(FP), DI
+	MOVQ	stat+8(FP), SI
+	MOVL	$SYS_fstat, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+16(FP)
 	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$16
