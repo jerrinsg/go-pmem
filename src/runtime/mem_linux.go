@@ -11,13 +11,11 @@ import (
 )
 
 const (
-	_EACCES              = 13
-	_EINVAL              = 22
-	_O_RDWR              = 0x2
-	_O_CREAT             = 0x40
-	_MAP_SHARED_VALIDATE = 0x03
-	_MAP_SYNC            = 0x80000
-	_PERM_ALL            = 0666 // read, write access to all users
+	_EACCES   = 13
+	_EINVAL   = 22
+	_O_RDWR   = 0x2
+	_O_CREAT  = 0x40
+	_PERM_ALL = 0666 // read, write access to all users
 )
 
 // Don't split the stack as this method may be invoked without a valid G, which
