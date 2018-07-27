@@ -45,6 +45,7 @@
 #define SYS_epoll_ctl		233
 #define SYS_tgkill		234
 #define SYS_openat		257
+#define SYS_unlinkat		263
 #define SYS_faccessat		269
 #define SYS_epoll_pwait		281
 #define SYS_fallocate		285
@@ -149,6 +150,18 @@ TEXT runtime·fstat(SB),NOSPLIT,$0-20
 	JLS	2(PC)
 	MOVL	$-1, AX
 	MOVL	AX, ret+16(FP)
+	RET
+
+TEXT runtime·unlinkat(SB),NOSPLIT,$0-28
+	MOVL	fd+0(FP), DI
+	MOVQ	path+8(FP), SI
+	MOVQ	flags+16(FP), DX
+	MOVL	$SYS_unlinkat, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+24(FP)
 	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$16
