@@ -41,9 +41,13 @@ const (
 	// 32 bytes of data.
 	heapBytesPerPage = pageSize / 32
 
+	// The maximum span class of a small span
+	maxSmallSpanclass = 133
+
 	// The maximum value that will logged in span bitmap corresponding to a small span.
-	// This is when s.spanclass = 133 and s.needzero = 1
-	maxSmallSpanVal = 267
+	// This is when the spanclass of the span is 133 and its needzero parameter
+	// is 1.
+	maxSmallSpanLogVal = (maxSmallSpanclass << 1) + 1
 )
 
 var (
@@ -111,7 +115,7 @@ func createSpan(sVal uint32, baseAddr uintptr) {
 	var spc spanClass
 	large := false
 	needzero := ((sVal & 1) == 1)
-	if sVal > maxSmallSpanVal { // large allocation
+	if sVal > maxSmallSpanLogVal { // large allocation
 		large = true
 		noscan := ((sVal >> 1 & 1) == 1)
 		npages = int((sVal >> 2) - 66 + 4)
