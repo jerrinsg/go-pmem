@@ -40,6 +40,10 @@ const (
 	// runtime uses 1 byte of heap type bitmap to record type information of
 	// 32 bytes of data.
 	heapBytesPerPage = pageSize / 32
+
+	// The maximum value that will logged in span bitmap corresponding to a small span.
+	// This is when s.spanclass = 133 and s.needzero = 1
+	maxSmallSpanVal = 267
 )
 
 var (
@@ -83,6 +87,67 @@ var pmemInfo struct {
 	endAddr uintptr
 }
 
+// Function that restores the runtime state related to persistent memory.
+// This involves recreating memory allocator metadata and copying the heap type
+// bits.
+func restorePmemState() {
+	spanCount := 0
+	// Iterate over the span bitmap log and recreate spans one by one
+	for i, sVal := range pmemInfo.spanBitmap {
+		if sVal != 0 {
+			baseAddr := pmemInfo.startAddr + uintptr(i*pageSize)
+			createSpan(sVal, baseAddr)
+			spanCount++
+		}
+	}
+	println("Reconstructed ", spanCount, " number of spans")
+}
+
+// createSpan figures out the properties of the span to be reconstructed such as
+// spanclass, number of pages, the needzero value, etc. and calls the core
+// reconstruction function createSpanCore.
+func createSpan(sVal uint32, baseAddr uintptr) {
+	var npages int
+	var spc spanClass
+	large := false
+	needzero := ((sVal & 1) == 1)
+	if sVal > maxSmallSpanVal { // large allocation
+		large = true
+		noscan := ((sVal >> 1 & 1) == 1)
+		npages = int((sVal >> 2) - 66 + 4)
+		spc = makeSpanClass(0, noscan)
+	} else {
+		npages = int(class_to_allocnpages[sVal>>2])
+		spc = spanClass(sVal >> 1)
+	}
+	createSpanCore(spc, baseAddr, npages, large, needzero)
+}
+
+// Function to search the memory allocator free treap to find if it contains a
+// large-enough span that can contain the required span with start address
+// baseAddr and npages number of pages
+func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
+	// TODO
+	return nil
+}
+
+// The core reconstruction function that restores the memory allocator and garbage
+// collector metadata related to the persistent memory region.
+func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero bool) {
+	h := &mheap_
+
+	// Check the free treap to see if it has a large span that can
+	// contain the required span
+	treapRoot := h.free[isPersistent].treap
+	s := treapSearch(treapRoot, base, uintptr(npages))
+	if s == nil {
+		println("Unable to reconstruct span for address ", base)
+		throw("Unable to complete persistent memory metadata reconstruction")
+	}
+
+	// TODO initialize the span and add it to garbage collector list
+}
+
 // Persistent memory initialization function.
 // 'fname' is the file on persistent memory device that should be used for
 // persistent memory allocations. If the file does not exist on the persistent
@@ -96,7 +161,7 @@ var pmemInfo struct {
 // runtime-managed heap.
 // This function returns the address at which the file was mapped.
 // On error, a nil value is returned
-func PmallocInit(fname string, size, offset int) unsafe.Pointer {
+func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	if (size-offset) < pmemInitSize || size%pmemInitSize != 0 {
 		println(`Persistent memory initialization requires a minimum of 64MB
 			for initialization (size-offset) and size needs to be a
@@ -194,8 +259,15 @@ func PmallocInit(fname string, size, offset int) unsafe.Pointer {
 	// The end address of the persistent memory region
 	pmemInfo.endAddr = pmemInfo.startAddr + (usablePages << pageShift) - 1
 
+	// Reconstruction
 	if !firstTime {
-		// TODO reconstruction
+		// set needzero parameter of the reconstructed span as 1
+		s := spanOf(pmemInfo.startAddr)
+		if s == nil {
+			throw("Intialization did not complete successfully")
+		}
+		s.needzero = 1
+		restorePmemState()
 	}
 
 	// Set persistent memory as initialized
