@@ -425,6 +425,44 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 	// Todo persist the changes
 }
 
+// Restores the heap type bit information for the reconstructed span 's'.
+// The heap type bits is needed for the GC to identify what regions in the
+// reconstructed span have pointers in them.
+// The heap type bits for a span can span across two arenas. This function
+// copies the heap type bits for span 's' from the heap type bitmap log in
+// persistent memory to the arena datastructure in a per-arena manner.
+func restoreSpanHeapBits(s *mspan) {
+	bytesCopied := uintptr(0)
+	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
+	totalBytes := s.npages / 32 // total heap type bytes to be copied
+	spanAddr := s.base()
+	spanEnd := spanAddr + (s.npages << pageShift)
+
+	for bytesCopied < totalBytes {
+		// each iteration copies heap type bits corresponding to the heap region
+		// between 'spanAddr' and 'endAddr'
+		ai := arenaIndex(spanAddr)
+		arenaEnd := arenaBase(ai) + heapArenaBitmapBytes
+		endAddr := arenaEnd
+		// Since a span can span across two arenas, the end adress to be used to
+		// copy the heap type bits is the minimium of the span end address and the
+		// arena end address.
+		if spanEnd < endAddr {
+			endAddr = spanEnd
+		}
+
+		numSpanBytes := (endAddr - spanAddr)
+		srcAddr := pmemHeapBitsAddr(spanAddr)
+		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
+		memmove(dstAddr, srcAddr, numSpanBytes/32)
+
+		bytesCopied += (numSpanBytes / 32)
+		spanAddr += numSpanBytes
+	}
+}
+
+// pmemHeapBitsAddr returns the address in persistent memory where heap type
+// bitmap will be logged corresponding to virtual address 'x'
 func pmemHeapBitsAddr(x uintptr) unsafe.Pointer {
 	offset := (uintptr(x) - pmemInfo.startAddr) / 32
 	return unsafe.Pointer(&pmemInfo.typeBitmap[offset])
