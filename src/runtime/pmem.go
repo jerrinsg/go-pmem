@@ -412,25 +412,22 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 		throw("Invalid heap type bits logging request")
 	}
 
-	offset := (addr - pmemInfo.startAddr) / 32
-	bitAddr := &pmemInfo.typeBitmap[offset]
-	sourceAddr := startByte
+	dstAddr := pmemHeapBitsAddr(addr)
+	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
 
 	// From heapBitsSetType():
 	// There can only be one allocation from a given span active at a time,
 	// and the bitmap for a span always falls on byte boundaries,
 	// so there are no write-write races for access to the heap bitmap.
 	// Hence, heapBitsSetType can access the bitmap without atomics.
-	for {
-		*bitAddr = *sourceAddr
-		if sourceAddr == endByte {
-			break
-		}
-		bitAddr = add1(bitAddr)
-		sourceAddr = add1(sourceAddr)
-	}
+	memmove(dstAddr, unsafe.Pointer(startByte), numHeapBytes)
 
 	// Todo persist the changes
+}
+
+func pmemHeapBitsAddr(x uintptr) unsafe.Pointer {
+	offset := (uintptr(x) - pmemInfo.startAddr) / 32
+	return unsafe.Pointer(&pmemInfo.typeBitmap[offset])
 }
 
 // Function to check that 'addr' is an address in the persistent memory range
