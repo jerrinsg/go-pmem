@@ -164,20 +164,24 @@ func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
 // Function that searches the mheap free large treap and free lists to find a
 // large span that can contain the required span with 'npages' number of spans
 // starting  at address 'baseAddr'.
-func searchSpan(base uintptr, npages int) *mspan {
+func searchSpan(baseAddr uintptr, npages int) *mspan {
 	h := &mheap_
 
 	// Check the free treap to see if it has a large span that can
 	// contain the required span
 	treapRoot := h.free[isPersistent].treap
-	s := treapSearch(treapRoot, base, uintptr(npages))
+	s := treapSearch(treapRoot, baseAddr, uintptr(npages))
 	return s
 }
 
 // The core reconstruction function that restores the memory allocator and garbage
 // collector metadata related to the persistent memory region.
 func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero bool) {
+	h := &mheap_
+	// lock mheap before searching for the required span
+	lock(&h.lock)
 	s := searchSpan(base, npages)
+	unlock(&h.lock)
 	if s == nil {
 		println("Unable to reconstruct span for address ", base)
 		throw("Unable to complete persistent memory metadata reconstruction")
