@@ -129,9 +129,35 @@ func createSpan(sVal uint32, baseAddr uintptr) {
 
 // Function to search the memory allocator free treap to find if it contains a
 // large-enough span that can contain the required span with start address
-// baseAddr and npages number of pages
+// 'baseAddr' and 'npages' number of pages
 func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
-	// TODO
+	if root == nil {
+		return nil
+	}
+	key := root.spanKey
+
+	// Check if key points to a span that has base address less than or equal
+	// to 'baseAddr' and has the required number of pages
+	if key.base() <= baseAddr && (key.base()+key.npages*pageSize) >=
+		baseAddr+uintptr(npages*pageSize) {
+		mheap_.free[isPersistent].removeNode(root)
+		return key
+	}
+
+	// Recursively search the left subtree
+	if root.left != nil && root.left.npagesKey >= npages {
+		if sl := treapSearch(root.left, baseAddr, npages); sl != nil {
+			return sl
+		}
+	}
+
+	// Recursively search the right subtree
+	if root.right != nil && root.right.npagesKey >= npages {
+		if sr := treapSearch(root.right, baseAddr, npages); sr != nil {
+			return sr
+		}
+	}
+
 	return nil
 }
 
