@@ -1896,8 +1896,9 @@ func typecheck1(n *Node, top int) (res *Node) {
 
 			n.Left = l
 			n.Right = r
-			n.Op = OMAKESLICE
-			if n.Op == OPMAKE {
+			if n.Op == OMAKE {
+				n.Op = OMAKESLICE
+			} else {
 				n.Op = OPMAKESLICE
 			}
 
