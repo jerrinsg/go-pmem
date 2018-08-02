@@ -895,7 +895,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 			span := c.alloc[persistent][tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, _, shouldhelpgc = c.nextFree(tinySpanClass, persistent)
+				v, span, shouldhelpgc = c.nextFree(tinySpanClass, persistent)
+				if persistent == isPersistent {
+					logSpanAlloc(span)
+				}
 			}
 			x = unsafe.Pointer(v)
 			(*[2]uint64)(x)[0] = 0
@@ -920,6 +923,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(spc, persistent)
+				if persistent == isPersistent {
+					logSpanAlloc(span)
+				}
 			}
 			x = unsafe.Pointer(v)
 			if needzero && span.needzero != 0 {
@@ -936,6 +942,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 		s.allocCount = 1
 		x = unsafe.Pointer(s.base())
 		size = s.elemsize
+		if persistent == isPersistent {
+			logSpanAlloc(s)
+		}
 	}
 
 	var scanSize uintptr
