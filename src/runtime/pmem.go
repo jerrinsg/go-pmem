@@ -173,20 +173,79 @@ func (h *mheap) searchSpanLocked(baseAddr uintptr, npages int) *mspan {
 	return s
 }
 
-// The core reconstruction function that restores the memory allocator and garbage
-// collector metadata related to the persistent memory region.
+// createSpanCore creates a span corresponding to memory region beginning at
+// address 'base' and containing 'npages' number of pages. It first searches the
+// mheap free list/treap to find a large span to carve this span from. It then
+// trims out any unnecessary regions from the span obtained from the search, sets
+// the necessary metadata for the span, and restores the heap type bit information
+// for this span.
 func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero bool) {
 	h := &mheap_
 	// lock mheap before searching for the required span
 	lock(&h.lock)
 	s := h.searchSpanLocked(base, npages)
-	unlock(&h.lock)
 	if s == nil {
 		println("Unable to reconstruct span for address ", base)
 		throw("Unable to complete persistent memory metadata reconstruction")
 	}
 
-	// TODO initialize the span and add it to garbage collector list
+	// The span we found from the search might contain more pages than necessary.
+	// Trim the leading and trailing pages of the span.
+	leadpages := (base - s.base()) >> pageShift
+	if leadpages > 0 {
+		freeSpan(leadpages, s.base(), s.needzero)
+	}
+
+	trailpages := s.npages - leadpages - uintptr(npages)
+	if trailpages > 0 {
+		freeSpan(trailpages, base+uintptr(npages*pageSize), s.needzero)
+	}
+
+	// Initialize s with the correct base address and number of pages
+	s.init(base, uintptr(npages))
+	h.setSpans(s.base(), s.npages, s)
+	unlock(&h.lock)
+
+	// Initialize other metadata of s
+	s.state = mSpanInUse
+	s.persistent = isPersistent
+	s.spanclass = spc
+
+	// copying span initialization code from alloc_m() in mheap.go
+	if sizeclass := spc.sizeclass(); sizeclass == 0 { // indicates a large span
+		s.elemsize = s.npages << pageShift
+		s.divShift = 0
+		s.divMul = 0
+		s.divShift2 = 0
+		s.baseMask = 0
+	} else {
+		s.elemsize = uintptr(class_to_size[sizeclass])
+		m := &class_to_divmagic[sizeclass]
+		s.divShift = m.shift
+		s.divMul = m.mul
+		s.divShift2 = m.shift2
+		s.baseMask = m.baseMask
+	}
+	s.needzero = uint8(bool2int(needzero))
+
+	// TODO add s to appropriate memory allocator list and also set it for garbage collection
+}
+
+// freeSpan() is used to put back trimmed out regions of a span back into the
+// memory allocator free list/treap. 'npages' is the number of pages in the trimmed
+// region, and 'base' is its start address.
+// mheap must be locked before calling this function
+func freeSpan(npages, base uintptr, needzero uint8) {
+	h := &mheap_
+	t := (*mspan)(h.spanalloc.alloc())
+	t.init(base, npages)
+	t.persistent = isPersistent
+
+	h.setSpan(t.base(), t)
+	h.setSpan(t.base()+t.npages*pageSize-1, t)
+	t.needzero = needzero
+	t.state = mSpanManual
+	h.freeSpanLocked(t, false, false, 0)
 }
 
 // Persistent memory initialization function.
