@@ -40,7 +40,6 @@ func (c *mcentral) init(spc spanClass) {
 // The persistent parameter indicates if the memory should be allocated from
 // persistent memory or volatile memory.
 func (c *mcentral) cacheSpan(persistent int) *mspan {
-	// todo add persistent memory support
 	// Deduct credit for this span allocation and sweep if necessary.
 	spanBytes := uintptr(class_to_allocnpages[c.spanclass.sizeclass()]) * _PageSize
 	deductSweepCredit(spanBytes, 0)
@@ -251,6 +250,8 @@ func (c *mcentral) freeSpan(s *mspan, preserve bool, wasempty bool) bool {
 }
 
 // grow allocates a new empty span from the heap and initializes it for c's size class.
+// The persistent parameter indicates if the memory should be allocated from
+// persistent memory or volatile memory.
 func (c *mcentral) grow(persistent int) *mspan {
 	npages := uintptr(class_to_allocnpages[c.spanclass.sizeclass()])
 	size := uintptr(class_to_size[c.spanclass.sizeclass()])
