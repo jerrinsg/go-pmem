@@ -522,7 +522,7 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 func restoreSpanHeapBits(s *mspan) {
 	bytesCopied := uintptr(0)
 	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
-	totalBytes := s.npages / 32 // total heap type bytes to be copied
+	totalBytes := (s.npages << pageShift) / 32 // total heap type bytes to be copied
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
 
@@ -530,7 +530,7 @@ func restoreSpanHeapBits(s *mspan) {
 		// each iteration copies heap type bits corresponding to the heap region
 		// between 'spanAddr' and 'endAddr'
 		ai := arenaIndex(spanAddr)
-		arenaEnd := arenaBase(ai) + heapArenaBitmapBytes
+		arenaEnd := arenaBase(ai) + heapArenaBytes
 		endAddr := arenaEnd
 		// Since a span can span across two arenas, the end adress to be used to
 		// copy the heap type bits is the minimium of the span end address and the
