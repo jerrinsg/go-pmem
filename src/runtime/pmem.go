@@ -52,6 +52,14 @@ const (
 
 var (
 	memTypes = []int{isPersistent, isNotPersistent}
+
+	// gcp stores the GC percentage value when persistent memory initialization
+	// function is invoked. GC percentage controls how often garbage collection
+	// is done (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
+	// During initialization, garbage collection is disabled.
+	// The GC percentage value is restored when garbage collection is enabled
+	// by explicitly calling EnableGC().
+	gcp int32
 )
 
 // Constants representing possible persistent memory initialization states
@@ -189,6 +197,9 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 		throw("Unable to complete persistent memory metadata reconstruction")
 	}
 
+	// set span state as mSpanManual so that the spans freed below (corresponding
+	// to the trailing and leading pages) do not coalesce with s.
+	s.state = mSpanManual
 	// The span we found from the search might contain more pages than necessary.
 	// Trim the leading and trailing pages of the span.
 	leadpages := (base - s.base()) >> pageShift
@@ -204,7 +215,6 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	// Initialize s with the correct base address and number of pages
 	s.init(base, uintptr(npages))
 	h.setSpans(s.base(), s.npages, s)
-	unlock(&h.lock)
 
 	// Initialize other metadata of s
 	s.state = mSpanInUse
@@ -228,7 +238,62 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	}
 	s.needzero = uint8(bool2int(needzero))
 
-	// TODO add s to appropriate memory allocator list and also set it for garbage collection
+	if large == false {
+		size := uintptr(class_to_size[spc.sizeclass()])
+		n := uintptr(npages<<pageShift) / size
+		s.limit = s.base() + size*n
+	} else {
+		s.limit = s.base() + (uintptr(npages) << pageShift)
+	}
+
+	_, ln, _ := s.layout()
+
+	// During reconstruction, we mark the span as being completely used. This is
+	// done by setting the allocCount and freeindex as the number of elements in
+	// the span, and allocCache as 0 (allocCache holds the complement of allocBits).
+	// The expectation is that GC will later do the required cleanup.
+
+	// copying code block from initSpan() here
+	// Init the markbit structures
+	s.nelems = ln
+	s.allocCount = uint16(ln) // set span as being fully allocated
+	s.freeindex = ln
+	s.allocCache = 0 // all 0s indicating all objects in the span are in-use
+	s.allocBits = newAllocBits(s.nelems)
+	s.gcmarkBits = newMarkBits(s.nelems)
+
+	// Put span s in the appropriate memory allocator list
+	if large {
+		h.busy[isPersistent].insertBack(s)
+	} else {
+		// In-use and empty (no free objects) small spans are stored in the empty
+		// list in mcentral. Since the span is empty, it will not be cached in
+		// mcache.
+		c := &mheap_.central[isPersistent][spc].mcentral
+		lock(&c.lock)
+		c.empty.insertBack(s)
+		unlock(&c.lock)
+	}
+
+	// Set the sweep generation(SG) of the reconstructed span as the global SG.
+	// Global SG will not change during the reconstruction process as GC is
+	// disabled.
+	s.sweepgen = h.sweepgen
+
+	// From mheap.go: sweepSpans contains two mspan stacks: one of swept in-use
+	// spans, and one of unswept in-use spans. These two trade roles on each GC
+	// cycle. Since the sweepgen increases by 2 on each cycle, this means the
+	// swept spans are in sweepSpans[sweepgen/2%2] and the unswept spans are in
+	// sweepSpans[1-sweepgen/2%2]. Sweeping pops spans from the unswept stack
+	// and pushes spans that are still in-use on the swept stack. Likewise,
+	// allocating an in-use span pushes it  on the swept stack.
+
+	// Place the reconstructed spans in the swept in-use stack of sweepSpans.
+	// During the next full GC cycle, these spans would all be considered to be
+	// unswept, and will be swept by the GC.
+	h.sweepSpans[(h.sweepgen / 2 % 2)].push(s)
+	unlock(&h.lock)
+	restoreSpanHeapBits(s)
 }
 
 // freeSpan() is used to put back trimmed out regions of a span back into the
@@ -355,12 +420,16 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	typeEntries := (usablePages << pageShift) / 32
 	typeBitsAddr := unsafe.Pointer(uintptr(spanBitsAddr) + uintptr(spanBitmapSize))
 	pmemInfo.typeBitmap = (*(*[1 << 28]byte)(typeBitsAddr))[:typeEntries]
-
 	// The end address of the persistent memory region
 	pmemInfo.endAddr = pmemInfo.startAddr + (usablePages << pageShift) - 1
 
+	// get current value of GC percentage
+	gcp = gcpercent
+
 	// Reconstruction
 	if !firstTime {
+		// Disable garbage collection during persistent memory initialization
+		gcp = setGCPercent(-1)
 		// set needzero parameter of the reconstructed span as 1
 		s := spanOf(pmemInfo.startAddr)
 		if s == nil {
@@ -374,6 +443,25 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	atomic.Store(&pmemInfo.initState, initDone)
 
 	return pmemMappedAddr
+}
+
+// EnableGC restores the GC percentage value and runs a full GC cycle as a
+// stop-the-world event. This is written as a separate function to PmemInit()
+// because the persistent memory root pointer need to be set before a full GC
+// cycle is run (in case of a reconstruction).
+// Users are required to initialize persistent memory as follows:
+// (1) Call PmemInit to initialize persistent memory
+// (2) Set the root pointer
+// (3) Call EnableGC()
+func EnableGC() {
+	setGCPercent(gcp) // restore GC percentage
+	// Run GC so that unused memory in reconstructed spans are reclaimed
+	stw := debug.gcstoptheworld
+	// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a stop-the-world event
+	debug.gcstoptheworld = int32(gcForceBlockMode)
+	GC()
+	// restore gcstoptheworld
+	debug.gcstoptheworld = stw
 }
 
 // growPmemRegion maps the persistent memory file into the process address space

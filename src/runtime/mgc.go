@@ -1044,6 +1044,10 @@ func GC() {
 	// GC may move ahead on its own. For example, when we block
 	// until mark termination N, we may wake up in cycle N+2.
 
+	if pmemInfo.initState == initOngoing {
+		throw("GC should not be called when persistent memory initialization is ongoing")
+	}
+
 	// Wait until the current sweep termination, mark, and mark
 	// termination complete.
 	n := atomic.Load(&work.cycles)
