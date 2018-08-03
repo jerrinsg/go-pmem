@@ -164,9 +164,8 @@ func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
 // Function that searches the mheap free large treap and free lists to find a
 // large span that can contain the required span with 'npages' number of spans
 // starting  at address 'baseAddr'.
-func searchSpan(baseAddr uintptr, npages int) *mspan {
-	h := &mheap_
-
+// mheap must be locked before calling this function.
+func (h *mheap) searchSpanLocked(baseAddr uintptr, npages int) *mspan {
 	// Check the free treap to see if it has a large span that can
 	// contain the required span
 	treapRoot := h.free[isPersistent].treap
@@ -180,7 +179,7 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	h := &mheap_
 	// lock mheap before searching for the required span
 	lock(&h.lock)
-	s := searchSpan(base, npages)
+	s := h.searchSpanLocked(base, npages)
 	unlock(&h.lock)
 	if s == nil {
 		println("Unable to reconstruct span for address ", base)
