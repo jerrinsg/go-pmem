@@ -73,11 +73,11 @@ var depsRules = `
 	< container/list, container/ring,
 	  internal/cfg, internal/cpu,
 	  internal/goversion, internal/nettrace,
-	  unicode/utf8, unicode/utf16, unicode,
-	  unsafe;
+	  runtime/internal/cpuid, unicode/utf8,
+	  unicode/utf16, unicode, unsafe;
 
 	# RUNTIME is the core runtime group of packages, all of them very light-weight.
-	internal/cpu, unsafe
+	internal/cpu, unsafe, runtime/internal/cpuid
 	< internal/bytealg
 	< internal/unsafeheader
 	< runtime/internal/sys
