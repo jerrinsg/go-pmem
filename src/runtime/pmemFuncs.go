@@ -42,7 +42,7 @@ func PersistRange(addr, len uintptr, isPmem bool) {
 		pmemFuncs.flush(addr, len)
 		pmemFuncs.fence()
 	} else {
-		msync(addr, len)
+		msyncRange(addr, len)
 	}
 }
 
@@ -51,7 +51,7 @@ func FlushRange(addr, len uintptr, isPmem bool) {
 	if isPmem {
 		pmemFuncs.flush(addr, len)
 	} else {
-		msync(addr, len)
+		msyncRange(addr, len)
 	}
 }
 
