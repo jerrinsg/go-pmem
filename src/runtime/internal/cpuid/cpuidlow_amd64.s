@@ -13,8 +13,9 @@ TEXT ·cpuid_low(SB),NOSPLIT,$0-24
     MOVL CX, ecx+16(FP)
     MOVL DX, edx+20(FP)
     RET
+
 // func xgetbv_low(arg1 uint32) (eax, edx uint32)
-    TEXT ·xgetbv_low(SB),NOSPLIT,$0-16
+TEXT ·xgetbv_low(SB),NOSPLIT,$0-16
     MOVL arg1+0(FP), CX
     BYTE $0x0F
     BYTE $0x01
