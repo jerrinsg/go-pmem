@@ -119,7 +119,7 @@ TEXT runtime·read(SB),NOSPLIT,$0-28
 	RET
 
 TEXT runtime·fallocate(SB),NOSPLIT,$0-36
-	MOVL	fd+0(FP), DI
+	MOVQ	fd+0(FP), DI
 	MOVQ	mode+8(FP), SI
 	MOVQ	offset+16(FP), DX
 	MOVQ	len+24(FP), R10
@@ -132,7 +132,7 @@ TEXT runtime·fallocate(SB),NOSPLIT,$0-36
 	RET
 
 TEXT runtime·ftruncate(SB),NOSPLIT,$0-20
-	MOVL	fd+0(FP), DI
+	MOVQ	fd+0(FP), DI
 	MOVQ	len+8(FP), SI
 	MOVL	$SYS_ftruncate, AX
 	SYSCALL
@@ -143,7 +143,7 @@ TEXT runtime·ftruncate(SB),NOSPLIT,$0-20
 	RET
 
 TEXT runtime·fstat(SB),NOSPLIT,$0-20
-	MOVL	fd+0(FP), DI
+	MOVQ	fd+0(FP), DI
 	MOVQ	stat+8(FP), SI
 	MOVL	$SYS_fstat, AX
 	SYSCALL
@@ -154,7 +154,7 @@ TEXT runtime·fstat(SB),NOSPLIT,$0-20
 	RET
 
 TEXT runtime·unlinkat(SB),NOSPLIT,$0-28
-	MOVL	fd+0(FP), DI
+	MOVQ	fd+0(FP), DI
 	MOVQ	path+8(FP), SI
 	MOVQ	flags+16(FP), DX
 	MOVL	$SYS_unlinkat, AX
