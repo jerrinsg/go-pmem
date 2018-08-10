@@ -163,44 +163,25 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, persistent int) {
 	mSysStatInc(sysStat, n)
 
-	fd := int32(-1)
-	var mapFlags int32
+	var p unsafe.Pointer
+	var err int
 
 	if persistent == isPersistent {
 		if pmemInfo.initState == initDone {
 			// We support mapping a file in persistent memory only once. If persistent
 			// memory is already initialized, we have then run out of persistent memory.
-			throw("sysMapP(): Out of memory")
+			throw("sysMap(): Out of memory")
 		}
-
-		// MAP_SYNC flag is supported only for files that support DAX (direct
-		// mapping of persistent memory). Mapping other files with this flag will
-		// fail with EOPNOTSUPP.
-		// todo - add support to check if file support DAX mode mapping.
-		mapFlags = _MAP_SYNC | _MAP_SHARED_VALIDATE | _MAP_FIXED
-
-		// pmemInfo.fname is the file that user wishes to use for persistent
-		// memory allocations.
-		arr := []byte(pmemInfo.fname)
-		fd = open(&arr[0], _O_CREAT|_O_RDWR, _PERM_ALL)
-		if fd < 0 {
-			throw("file open failed")
-		}
-		if fallocate(uintptr(fd), 0, 0, n) < 0 {
-			throw("fallocate failed")
-		}
+		p, pmemInfo.isPmem, err = PmapFile(pmemInfo.fname, int(n), fileCreate, _PERM_ALL, v)
 	} else {
-		mapFlags = _MAP_ANON | _MAP_FIXED | _MAP_PRIVATE
+		mapFlags := int32(_MAP_ANON | _MAP_FIXED | _MAP_PRIVATE)
+		p, err = mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, -1, 0)
 	}
 
-	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, fd, 0)
 	if err == _ENOMEM {
 		throw("runtime: out of memory")
 	}
 	if p != v || err != 0 {
 		throw("runtime: cannot map pages in arena address space")
-	}
-	if fd > 0 && closefd(fd) < 0 {
-		throw("error closing file")
 	}
 }

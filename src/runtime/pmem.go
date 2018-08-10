@@ -75,6 +75,10 @@ var pmemInfo struct {
 	// The persistent memory backing file name
 	fname string
 
+	// isPmem stores whether the backing file is on a persistent memory medium
+	// and supports direct access (DAX)
+	isPmem bool
+
 	// Persistent memory initialization state
 	// This is used to prevent concurrent/multiple persistent memory initialization
 	initState uint32
