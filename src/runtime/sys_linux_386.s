@@ -131,11 +131,6 @@ TEXT runtime·read(SB),NOSPLIT,$0
 	MOVL	AX, ret+12(FP)
 	RET
 
-// fallocate not implemented, return -1
-TEXT runtime·fallocate(SB),NOSPLIT,$0-20
-	MOVL	$-1, ret+16(FP)
-	RET
-
 TEXT runtime·usleep(SB),NOSPLIT,$8
 	MOVL	$0, DX
 	MOVL	usec+0(FP), AX

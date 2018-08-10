@@ -1,3 +1,5 @@
+// +build amd64
+
 TEXT runtime·sfence(SB),$0
 	SFENCE
 	RET
