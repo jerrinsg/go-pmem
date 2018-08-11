@@ -28,6 +28,7 @@ func fallocate(fd, mode, offset, len uintptr) int32
 func fstat(fd, stat uintptr) int32
 func unlinkat(fd, path, flags uintptr) int32
 func msync(addr, len, flags uintptr) int32
+func readlink(path, buf, len uintptr) int32
 
 //go:noescape
 func open(name *byte, mode, perm int32) int32

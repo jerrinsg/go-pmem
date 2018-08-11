@@ -36,6 +36,7 @@
 #define SYS_kill		62
 #define SYS_fcntl		72
 #define SYS_ftruncate		77
+#define SYS_readlink		89
 #define SYS_sigaltstack 	131
 #define SYS_arch_prctl		158
 #define SYS_gettid		186
@@ -170,6 +171,18 @@ TEXT runtime·msync(SB),NOSPLIT,$0-28
 	MOVQ	len+8(FP), SI
 	MOVQ	flags+16(FP), DX
 	MOVL	$SYS_msync, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+24(FP)
+	RET
+
+TEXT runtime·readlink(SB),NOSPLIT,$0-28
+	MOVQ	path+0(FP), DI
+	MOVQ	buf+8(FP), SI
+	MOVQ	len+16(FP), DX
+	MOVL	$SYS_readlink, AX
 	SYSCALL
 	CMPQ	AX, $0xfffffffffffff001
 	JLS	2(PC)

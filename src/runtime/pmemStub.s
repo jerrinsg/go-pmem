@@ -35,3 +35,7 @@ TEXT runtime·ftruncate(SB),$0
 TEXT runtime·fstat(SB),$0
     // not implemented
 	RET
+
+TEXT runtime·readlink(SB),$0
+	// not implemented
+	RET
