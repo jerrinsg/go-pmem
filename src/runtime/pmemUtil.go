@@ -9,6 +9,9 @@ const (
 	_MAP_SHARED_VALIDATE = 0x03
 	_MAP_SYNC            = 0x80000
 	_EOPNOTSUPP          = 95
+	S_IFMT               = 0xf000
+	S_IFCHR              = 0x2000
+	PATH_MAX             = 256
 )
 
 type timespec_t struct {
@@ -69,4 +72,88 @@ func utilGetFileSize(fd int) int {
 		return int(ret)
 	}
 	return int(st.size)
+}
+
+func isCharDev(mode uint32) bool {
+	return mode&S_IFMT == S_IFCHR
+}
+
+func majorNum(rdev uint64) uint {
+	return uint(rdev / 256)
+}
+
+func minorNum(rdev uint64) uint {
+	return uint(rdev % 256)
+}
+
+func utilIsFdDevDax(fd int32) bool {
+	var st stat_t
+	if fstat(uintptr(fd), uintptr(unsafe.Pointer(&st))) < 0 {
+		println("utilIsFdDevDax: Error fstat of file")
+		return false
+	}
+
+	if !isCharDev(st.mode) {
+		// file is not a character device
+		return false
+	}
+
+	// The below code block checks if fd is a device that supports direct-access
+	// (DAX). It checks whether /sys/dev/char/M:N/subsystem is a symlink to
+	// /sys/class/dax, where M and N are the major and minor number of the
+	// character device. There is no implementation of realpath() API in golang
+	// runtime. Hence, the code below uses a workaround by calling readlink()
+	// to read the contents of the symlink. The content of the symlink will be
+	// a relative path to /sys/class/dax. It then verifies that the last 9
+	// characters equal 'class/dax'.
+	// See util_fd_is_device_dax() in https://github.com/pmem/pmdk/blob/master/src/common/file.c
+
+	devPath := "/sys/dev/char/" + uintToString(majorNum(st.rdev)) + ":" +
+		uintToString(minorNum(st.rdev)) + "/subsystem"
+
+	resolvedPath := readLink(devPath)
+	if len(resolvedPath) < 9 {
+		return false
+	}
+	return resolvedPath[len(resolvedPath)-9:] == "class/dax"
+}
+
+// readLink is a helper function to call the readlink system call. It casts the
+// arguments to the required datatype and invokes the system call.
+func readLink(path string) string {
+	var b [PATH_MAX]byte
+	pathArray := []byte(path)
+	ret := readlink(uintptr(unsafe.Pointer(&pathArray[0])),
+		uintptr(unsafe.Pointer(&b[0])), PATH_MAX)
+	if ret < 0 {
+		return "" // read link failed
+	}
+
+	// Find the length of the path to return. This is done by finding the first
+	// byte that is 0 in the byte array.
+	len := 0
+	for len = 0; len < PATH_MAX; len++ {
+		if b[len] == 0 {
+			break
+		}
+	}
+	return string(b[:len])
+}
+
+// A utility function to convert an unsigned integer number to a string.
+func uintToString(num uint) string {
+	var b [PATH_MAX]byte
+	var ind int
+	for num > 0 {
+		r := num % 10
+		b[ind] = byte('0' + r)
+		ind++
+		num /= 10
+	}
+	// The bytes stored in the array is in the inverted order. Reverse the array
+	// to get the correct byte stream.
+	for i, j := 0, ind-1; i < ind/2; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return string(b[:ind])
 }

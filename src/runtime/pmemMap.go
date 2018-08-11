@@ -5,9 +5,10 @@ import (
 )
 
 const (
-	fileCreate   = (1 << 0)
-	fileExcl     = (1 << 1)
-	fileAllFlags = fileCreate | fileExcl
+	fileCreate        = (1 << 0)
+	fileExcl          = (1 << 1)
+	fileAllFlags      = fileCreate | fileExcl
+	fileDaxValidFlags = fileCreate
 
 	_O_RDRW = 0x0002 // open for reading and writing
 	_O_EXCL = 0x0800 // exclusive mode - error if file already exists
@@ -33,8 +34,12 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 
 	devDax := isFileDevDax(path)
 	if devDax {
-		// TODO device DAX is not yet supported
-		return
+		if flags & ^fileDaxValidFlags != 0 {
+			println("flag unsupported for Device DAX")
+			return
+		}
+		// ignore all of the flags for devdax
+		flags = 0
 	}
 
 	if flags&fileCreate != 0 {
@@ -66,6 +71,18 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 		return
 	}
 
+	if devDax {
+		actualLen := utilGetFileSize(int(fd))
+		if actualLen < 0 {
+			println("unable to read Device DAX size")
+			return
+		}
+		if len != 0 && len != actualLen {
+			println("Device DAX length must be either 0 or the exact size of the device")
+			return
+		}
+	}
+
 	if (flags&fileCreate != 0) && (flags&fileExcl != 0) {
 		delFileOnErr = true
 	}
@@ -91,8 +108,13 @@ func mapFd(fd int32, flags, len int, mapAddr unsafe.Pointer) (addr unsafe.Pointe
 			return
 		}
 	} else {
-		// TODO - get file stat and set len as actual file size
-		// TODO - implement fstat system call
+		actualLen := utilGetFileSize(int(fd))
+		if actualLen < 0 {
+			println("Get file size failed")
+			err = actualLen
+			return
+		}
+		len = actualLen
 	}
 
 	return utilMap(mapAddr, fd, len, __MAP_SHARED, false)
