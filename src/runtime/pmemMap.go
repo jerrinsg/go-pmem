@@ -35,7 +35,7 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 	devDax := isFileDevDax(path)
 	if devDax {
 		if flags & ^fileDaxValidFlags != 0 {
-			println("flag unsupported for Device DAX")
+			println("Flag unsupported for Device DAX")
 			return
 		}
 		// ignore all of the flags for devdax
@@ -55,12 +55,12 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 	}
 
 	if (len != 0) && (flags&fileCreate == 0) {
-		println("non-zero 'len' not allowed without fileCreate flag")
+		println("Non-zero 'len' not allowed without fileCreate flag")
 		return
 	}
 
 	if (len == 0) && (flags&fileCreate != 0) {
-		println("zero 'len' not allowed with fileCreate flag")
+		println("Zero 'len' not allowed with fileCreate flag")
 		return
 	}
 
@@ -74,7 +74,7 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 	if devDax {
 		actualLen := utilGetFileSize(int(fd))
 		if actualLen < 0 {
-			println("unable to read Device DAX size")
+			println("Unable to read Device DAX size")
 			return
 		}
 		if len != 0 && len != actualLen {
@@ -100,17 +100,17 @@ func mapFd(fd int32, flags, len int, mapAddr unsafe.Pointer) (addr unsafe.Pointe
 		// set the length of the file to 'len'
 		// extend or truncate existing file
 		if err = int(ftruncate(uintptr(fd), uintptr(len))); err != 0 {
-			println("ftruncate failed")
+			println("mapFd: ftruncate() failed")
 			return
 		}
 		if err = int(fallocate(uintptr(fd), 0, 0, uintptr(len))); err != 0 {
-			println("fallocate failed")
+			println("mapFd: fallocate() failed")
 			return
 		}
 	} else {
 		actualLen := utilGetFileSize(int(fd))
 		if actualLen < 0 {
-			println("Get file size failed")
+			println("mapFd: Get file size failed")
 			err = actualLen
 			return
 		}
