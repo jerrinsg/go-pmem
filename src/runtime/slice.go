@@ -115,6 +115,11 @@ func growslice(et *_type, old slice, cap int) slice {
 		}
 	}
 
+	persistent := isNotPersistent
+	if inPmem(uintptr(old.array)) {
+		persistent = isPersistent
+	}
+
 	var overflow bool
 	var lenmem, newlenmem, capmem uintptr
 	// Specialize for common values of et.size.
@@ -174,13 +179,13 @@ func growslice(et *_type, old slice, cap int) slice {
 
 	var p unsafe.Pointer
 	if et.kind&kindNoPointers != 0 {
-		p = mallocgc(capmem, nil, doesntNeedZeroed, isNotPersistent)
+		p = mallocgc(capmem, nil, doesntNeedZeroed, persistent)
 		// The append() that calls growslice is going to overwrite from old.len to cap (which will be the new length).
 		// Only clear the part that will not be overwritten.
 		memclrNoHeapPointers(add(p, newlenmem), capmem-newlenmem)
 	} else {
 		// Note: can't use rawmem (which avoids zeroing of memory), because then GC can scan uninitialized memory.
-		p = mallocgc(capmem, et, needZeroed, isNotPersistent)
+		p = mallocgc(capmem, et, needZeroed, persistent)
 		if writeBarrier.enabled {
 			// Only shade the pointers in old.array since we know the destination slice p
 			// only contains nil pointers because it has been cleared during alloc.
