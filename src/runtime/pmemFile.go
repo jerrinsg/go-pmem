@@ -13,7 +13,6 @@ func isFileDevDax(path string) bool {
 	pathArray := []byte(path)
 	fd := open(&pathArray[0], _O_RDONLY, 0)
 	if fd < 0 {
-		println("Opening file ", path, " failed")
 		return false
 	}
 
