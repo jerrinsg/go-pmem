@@ -649,5 +649,6 @@ func pmemHeapBitsAddr(x uintptr) unsafe.Pointer {
 
 // Function to check that 'addr' is an address in the persistent memory range
 func inPmem(addr uintptr) bool {
-	return addr >= pmemInfo.startAddr && addr <= pmemInfo.endAddr
+	return pmemInfo.initState == initDone && addr >= pmemInfo.startAddr &&
+		addr <= pmemInfo.endAddr
 }
