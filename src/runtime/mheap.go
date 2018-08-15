@@ -662,12 +662,10 @@ retry:
 	return n
 }
 
-// Todo check if reclaim support need to be added for persistent memory.
-// Currently supported only for volatile memory.
 // Sweeps and reclaims at least npage pages into heap.
 // Called before allocating npage pages.
-func (h *mheap) reclaim(npage uintptr) {
-	if h.reclaimList(&h.busy[isNotPersistent], npage) != 0 {
+func (h *mheap) reclaim(npage uintptr, persistent int) {
+	if h.reclaimList(&h.busy[persistent], npage) != 0 {
 		return // Bingo!
 	}
 
@@ -713,7 +711,7 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persiste
 		if trace.enabled {
 			traceGCSweepStart()
 		}
-		h.reclaim(npage)
+		h.reclaim(npage, persistent)
 		if trace.enabled {
 			traceGCSweepDone()
 		}
