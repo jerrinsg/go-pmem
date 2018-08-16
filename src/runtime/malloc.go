@@ -1074,25 +1074,25 @@ func pnewobject(typ *_type) unsafe.Pointer {
 }
 
 //go:linkname reflect_unsafe_New reflect.unsafe_New
-func reflect_unsafe_New(typ *_type) unsafe.Pointer {
-	return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
+func reflect_unsafe_New(typ *_type, persistent int) unsafe.Pointer {
+	return mallocgc(typ.size, typ, needZeroed, persistent)
 }
 
 // newarray allocates an array of n elements of type typ.
-func newarray(typ *_type, n int) unsafe.Pointer {
+func newarray(typ *_type, n, persistent int) unsafe.Pointer {
 	if n == 1 {
-		return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
+		return mallocgc(typ.size, typ, needZeroed, persistent)
 	}
 	mem, overflow := math.MulUintptr(typ.size, uintptr(n))
 	if overflow || mem > maxAlloc || n < 0 {
 		panic(plainError("runtime: allocation size out of range"))
 	}
-	return mallocgc(mem, typ, needZeroed, isNotPersistent)
+	return mallocgc(mem, typ, needZeroed, persistent)
 }
 
 //go:linkname reflect_unsafe_NewArray reflect.unsafe_NewArray
-func reflect_unsafe_NewArray(typ *_type, n int) unsafe.Pointer {
-	return newarray(typ, n)
+func reflect_unsafe_NewArray(typ *_type, n, persistent int) unsafe.Pointer {
+	return newarray(typ, n, persistent)
 }
 
 func profilealloc(mp *m, x unsafe.Pointer, size uintptr) {
