@@ -588,7 +588,7 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 		throw("Invalid addresses passed to logHeapBits")
 	}
 
-	if !inPmem(addr) {
+	if !InPmem(addr) {
 		throw("Invalid heap type bits logging request")
 	}
 
@@ -648,7 +648,7 @@ func pmemHeapBitsAddr(x uintptr) unsafe.Pointer {
 }
 
 // Function to check that 'addr' is an address in the persistent memory range
-func inPmem(addr uintptr) bool {
+func InPmem(addr uintptr) bool {
 	return pmemInfo.initState == initDone && pmemInfo.startAddr <= addr &&
 		addr <= pmemInfo.endAddr
 }

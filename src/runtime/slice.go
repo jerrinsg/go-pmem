@@ -116,7 +116,7 @@ func growslice(et *_type, old slice, cap int) slice {
 	}
 
 	persistent := isNotPersistent
-	if inPmem(uintptr(old.array)) {
+	if InPmem(uintptr(old.array)) {
 		persistent = isPersistent
 	}
 
