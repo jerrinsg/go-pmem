@@ -1,5 +1,9 @@
 package runtime
 
+import (
+	"unsafe"
+)
+
 type flushFunc func(addr, len uintptr)
 type fenceFunc func()
 
@@ -37,21 +41,21 @@ func init() {
 // address range to be flushed. 'isPmem' indicates if the address range is persistent
 // memory. Accordingly, CPU flush instructions such as clflush() or the memory
 // flush function msync() will be called.
-func PersistRange(addr, len uintptr, isPmem bool) {
+func PersistRange(addr unsafe.Pointer, len uintptr, isPmem bool) {
 	if isPmem {
-		pmemFuncs.flush(addr, len)
+		pmemFuncs.flush(uintptr(addr), len)
 		pmemFuncs.fence()
 	} else {
-		msyncRange(addr, len)
+		msyncRange(uintptr(addr), len)
 	}
 }
 
 // FlushRange - flush a range of persistent memory address
-func FlushRange(addr, len uintptr, isPmem bool) {
+func FlushRange(addr unsafe.Pointer, len uintptr, isPmem bool) {
 	if isPmem {
-		pmemFuncs.flush(addr, len)
+		pmemFuncs.flush(uintptr(addr), len)
 	} else {
-		msyncRange(addr, len)
+		msyncRange(uintptr(addr), len)
 	}
 }
 

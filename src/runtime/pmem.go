@@ -400,11 +400,11 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 		firstTime = true
 		// record the size of the persistent memory region
 		*sizeAddr = size
-		PersistRange(uintptr(unsafe.Pointer(sizeAddr)), unsafe.Sizeof(*sizeAddr), pmemInfo.isPmem)
+		PersistRange(unsafe.Pointer(sizeAddr), unsafe.Sizeof(*sizeAddr), pmemInfo.isPmem)
 
 		// record a header magic to distinguish between first run and subsequent runs
 		*magicAddr = pmemHdrMagic
-		PersistRange(uintptr(unsafe.Pointer(magicAddr)), unsafe.Sizeof(*magicAddr), pmemInfo.isPmem)
+		PersistRange(unsafe.Pointer(magicAddr), unsafe.Sizeof(*magicAddr), pmemInfo.isPmem)
 
 		// The first run of the application is distinguished from subsequent runs
 		// by comparing the header magic value written. Hence if an application is
@@ -542,7 +542,7 @@ func logSpanAlloc(s *mspan) {
 	}
 
 	atomic.Store(logAddr, logVal)
-	PersistRange(uintptr(unsafe.Pointer(logAddr)), unsafe.Sizeof(*logAddr), pmemInfo.isPmem)
+	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr), pmemInfo.isPmem)
 }
 
 // Function to log that a span has been completely freed. This is done by
@@ -556,7 +556,7 @@ func logSpanFree(s *mspan) {
 	logAddr := &pmemInfo.spanBitmap[index]
 
 	atomic.Store(logAddr, 0)
-	PersistRange(uintptr(unsafe.Pointer(logAddr)), unsafe.Sizeof(*logAddr), pmemInfo.isPmem)
+	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr), pmemInfo.isPmem)
 }
 
 // A helper function to compute the value that should be logged to record the
@@ -601,7 +601,7 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 	// so there are no write-write races for access to the heap bitmap.
 	// Hence, heapBitsSetType can access the bitmap without atomics.
 	memmove(dstAddr, unsafe.Pointer(startByte), numHeapBytes)
-	PersistRange(uintptr(dstAddr), numHeapBytes, pmemInfo.isPmem)
+	PersistRange(dstAddr, numHeapBytes, pmemInfo.isPmem)
 }
 
 // Restores the heap type bit information for the reconstructed span 's'.
