@@ -2,10 +2,7 @@ package runtime
 
 const (
 	FLUSH_ALIGN = 64 // cache line size
-	// Go runtime uses a virtual page size of 8192 bytes. Set _pageSize as 4096
-	// bytes which is the physical page size to be used for msync()
-	_pageSize = 4096
-	MS_SYNC   = 4
+	MS_SYNC     = 4
 )
 
 func flushClflush(addr, len uintptr) {
@@ -52,10 +49,10 @@ func msyncRange(addr, len uintptr) (ret int) {
 	// to represent the full 4k chunks covering the given range.
 
 	// increase len by the amount we gain when we round addr down
-	len += (addr & (_pageSize - 1))
+	len += (addr & (physPageSize - 1))
 
 	// round addr down to page boundary
-	uptr := uintptr(int(addr) & ^(int(_pageSize) - 1))
+	uptr := uintptr(int(addr) & ^(int(physPageSize) - 1))
 
 	// msync accepts addresses aligned to page boundary, so we may sync more and
 	// part of it may have been marked as undefined/inaccessible.  Msyncing such
