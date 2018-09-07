@@ -791,7 +791,13 @@ func mallocgc(size uintptr, typ *_type, needzero bool, persistent int) unsafe.Po
 
 	if size == 0 {
 		if persistent == isPersistent {
-			size = 1 // Allocate at least 1 byte
+			// For a 0-byte allocation, volatile allocator always returns the
+			// address of a global variable 'zerobase'.
+			// But this is not possible in the case of persistent memory allocator
+			// because persistent global variables are not supported. Hence, the
+			// persistent memory allocator returns the address of a newly allocated
+			// region of size at least 1 byte.
+			size = 1
 		} else {
 			return unsafe.Pointer(&zerobase)
 		}
