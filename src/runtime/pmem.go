@@ -24,16 +24,16 @@ const (
 
 	// A magic constant that will be written to the first 8 bytes of the
 	// persistent memory region. This constant will then help to differentiate
-	// between a first run and subsequent runs
+	// between a first run and subsequent runs.
 	pmemHdrMagic = 0xABCDCBA
 
 	// Persistent memory region header size in bytes. This includes
-	// pmemHdrMagic (8 bytes) and another 8 bytes to record the size of the
-	// persistent memory region.
-	pmemHdrSize = 16
+	// 8 bytes to store pmemHdrMagic, 8 bytes to record the size of the
+	// persistent memory region, and another 8 bytes to store the root pointer.
+	pmemHdrSize = 24
 
 	// Golang manages its heap in arenas of 64MB. Enforce persistent memory
-	// initialization size to be a multiple of 64MB
+	// initialization size to be a multiple of 64MB.
 	pmemInitSize = 64 * 1024 * 1024
 
 	// The number of bytes required to log heap type bits for one page. Golang
@@ -52,14 +52,6 @@ const (
 
 var (
 	memTypes = []int{isPersistent, isNotPersistent}
-
-	// gcp stores the GC percentage value when persistent memory initialization
-	// function is invoked. GC percentage controls how often garbage collection
-	// is done (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
-	// During initialization, garbage collection is disabled.
-	// The GC percentage value is restored when garbage collection is enabled
-	// by explicitly calling EnableGC().
-	gcp int32
 )
 
 // Constants representing possible persistent memory initialization states
@@ -101,6 +93,23 @@ var pmemInfo struct {
 
 	// The end address of the persistent memory region that the runtime manages.
 	endAddr uintptr
+
+	// A lock to protect modifications to the root pointer
+	rootLock mutex
+
+	// The application root pointer. Root pointer is the pointer through which
+	// the application accesses all data in the persistent memory region. This
+	// variable is used only during reconstruction. It ensures that there is at
+	// least one variable pointing to the application root before invoking
+	// garbage collection.
+	root unsafe.Pointer
+
+	// The address in the persistent memory region where the application root
+	// pointer will be stored. Since the address at which the persistent memory
+	// file is mapped can vary across application invocation, the root pointer
+	// offset from the beginning of the persistent memory region is stored rather
+	// than the actual pointer value.
+	rootAddr unsafe.Pointer
 }
 
 // Function that restores the runtime state related to persistent memory.
@@ -379,9 +388,10 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	// hdrAddr is the address of the header section in persistent memory
 	hdrAddr := unsafe.Pointer(uintptr(pmemMappedAddr) + uintptr(offset))
 	// Cast hdrAddr as a pointer to a slice to easily do pointer manipulations
-	addresses := (*[3]int)(hdrAddr)
+	addresses := (*[4]int)(hdrAddr)
 	magicAddr := &addresses[0]
 	sizeAddr := &addresses[1]
+	rootAddr := &addresses[2]
 
 	firstTime := false
 	// Read the first 8 bytes of header section to check for magic constant
@@ -412,9 +422,13 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 		// application will be considered as a first-time initialization.
 	}
 
+	// The address at which the root pointer offset will be stored in persistent
+	// memory.
+	pmemInfo.rootAddr = unsafe.Pointer(rootAddr)
+
 	// usablePages is the actual number of pages usable by the allocator
 	usablePages := totalPages - reservePages
-	spanBitsAddr := unsafe.Pointer(&addresses[2])
+	spanBitsAddr := unsafe.Pointer(&addresses[3])
 	// pmemInfo.spanBitmap is a slice with 'usablePages' number of entries,
 	// starting at address 'spanBitsAddr'
 	pmemInfo.spanBitmap = (*(*[1 << 28]uint32)(spanBitsAddr))[:usablePages]
@@ -427,9 +441,7 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	// The end address of the persistent memory region
 	pmemInfo.endAddr = pmemInfo.startAddr + (usablePages << pageShift) - 1
 
-	// get current value of GC percentage
-	gcp = gcpercent
-
+	var gcp int32
 	// Reconstruction
 	if !firstTime {
 		// Disable garbage collection during persistent memory initialization
@@ -441,31 +453,66 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 		}
 		s.needzero = 1
 		restorePmemState()
+
+		// Before invoking garbage collection, the runtime should ensure that
+		// there is at least one variable pointing to the application root data.
+		// Hence, save a copy of the root pointer in pmemInfo.root.
+		pmemInfo.root = GetRoot()
 	}
 
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
 
+	// Restore gc percentage and call GC()
+	if !firstTime {
+		setGCPercent(gcp) // restore GC percentage
+		// Run GC so that unused memory in reconstructed spans are reclaimed
+		stw := debug.gcstoptheworld
+		// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a
+		// stop-the-world event
+		debug.gcstoptheworld = int32(gcForceBlockMode)
+		GC()
+		// restore gcstoptheworld
+		debug.gcstoptheworld = stw
+	}
+
 	return pmemMappedAddr
 }
 
-// EnableGC restores the GC percentage value and runs a full GC cycle as a
-// stop-the-world event. This is written as a separate function to PmemInit()
-// because the persistent memory root pointer need to be set before a full GC
-// cycle is run (in case of a reconstruction).
-// Users are required to initialize persistent memory as follows:
-// (1) Call PmemInit to initialize persistent memory
-// (2) Set the root pointer
-// (3) Call EnableGC()
-func EnableGC() {
-	setGCPercent(gcp) // restore GC percentage
-	// Run GC so that unused memory in reconstructed spans are reclaimed
-	stw := debug.gcstoptheworld
-	// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a stop-the-world event
-	debug.gcstoptheworld = int32(gcForceBlockMode)
-	GC()
-	// restore gcstoptheworld
-	debug.gcstoptheworld = stw
+// GetRoot returns the root pointer that is stored in the persistent memory
+// header region. The actual value stored is an offset to the root pointer.
+// GetRoot computes the correct value by adding the offset with the persistent
+// memory start address.
+func GetRoot() unsafe.Pointer {
+	offset := *(*uintptr)(pmemInfo.rootAddr)
+	if offset == 0 {
+		return nil
+	}
+	addr := pmemInfo.startAddr + offset
+	if !InPmem(addr) {
+		// The offset does not point to a persistent memory address. This may
+		// have happened due to some data corruption. Return a nil pointer so
+		// that application does not access an unsafe address.
+		return nil
+	}
+	return unsafe.Pointer(addr)
+}
+
+// SetRoot stores the application root pointer in the persistent memory header
+// region.
+func SetRoot(addr unsafe.Pointer) {
+	if !InPmem(uintptr(addr)) {
+		throw("Invalid address passed to SetRoot")
+	}
+	lock(&pmemInfo.rootLock)
+	pmemInfo.root = addr
+	// Since the address at which the persistent memory region is mapped can vary
+	// across application invocation, store the offset to the root pointer instead
+	// of the actual root pointer value.
+	offset := uintptr(addr) - pmemInfo.startAddr
+	atomic.Store64((*uint64)(pmemInfo.rootAddr), uint64(offset))
+	PersistRange(pmemInfo.rootAddr, unsafe.Sizeof(offset), pmemInfo.isPmem)
+	unlock(&pmemInfo.rootLock)
 }
 
 // growPmemRegion maps the persistent memory file into the process address space
