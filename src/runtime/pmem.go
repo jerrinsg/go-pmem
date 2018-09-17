@@ -410,11 +410,11 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 		firstTime = true
 		// record the size of the persistent memory region
 		*sizeAddr = size
-		PersistRange(unsafe.Pointer(sizeAddr), unsafe.Sizeof(*sizeAddr), pmemInfo.isPmem)
+		PersistRange(unsafe.Pointer(sizeAddr), unsafe.Sizeof(*sizeAddr))
 
 		// record a header magic to distinguish between first run and subsequent runs
 		*magicAddr = pmemHdrMagic
-		PersistRange(unsafe.Pointer(magicAddr), unsafe.Sizeof(*magicAddr), pmemInfo.isPmem)
+		PersistRange(unsafe.Pointer(magicAddr), unsafe.Sizeof(*magicAddr))
 
 		// The first run of the application is distinguished from subsequent runs
 		// by comparing the header magic value written. Hence if an application is
@@ -511,7 +511,7 @@ func SetRoot(addr unsafe.Pointer) {
 	// of the actual root pointer value.
 	offset := uintptr(addr) - pmemInfo.startAddr
 	atomic.Store64((*uint64)(pmemInfo.rootAddr), uint64(offset))
-	PersistRange(pmemInfo.rootAddr, unsafe.Sizeof(offset), pmemInfo.isPmem)
+	PersistRange(pmemInfo.rootAddr, unsafe.Sizeof(offset))
 	unlock(&pmemInfo.rootLock)
 }
 
@@ -589,7 +589,7 @@ func logSpanAlloc(s *mspan) {
 	}
 
 	atomic.Store(logAddr, logVal)
-	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr), pmemInfo.isPmem)
+	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
 }
 
 // Function to log that a span has been completely freed. This is done by
@@ -603,7 +603,7 @@ func logSpanFree(s *mspan) {
 	logAddr := &pmemInfo.spanBitmap[index]
 
 	atomic.Store(logAddr, 0)
-	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr), pmemInfo.isPmem)
+	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
 }
 
 // A helper function to compute the value that should be logged to record the
@@ -648,7 +648,7 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 	// so there are no write-write races for access to the heap bitmap.
 	// Hence, heapBitsSetType can access the bitmap without atomics.
 	memmove(dstAddr, unsafe.Pointer(startByte), numHeapBytes)
-	PersistRange(dstAddr, numHeapBytes, pmemInfo.isPmem)
+	PersistRange(dstAddr, numHeapBytes)
 }
 
 // Restores the heap type bit information for the reconstructed span 's'.

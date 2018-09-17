@@ -38,11 +38,11 @@ func init() {
 
 // PersistRange - make any cached changes to a range of memory address persistent
 // 'addr' is the memory address to be flushed and 'len' is the length of the memory
-// address range to be flushed. 'isPmem' indicates if the address range is persistent
-// memory. Accordingly, CPU flush instructions such as clflush() or the memory
+// address range to be flushed.
+// Depening on pmemInfo.isPmem. CPU flush instructions such as clflush() or the memory
 // flush function msync() will be called.
-func PersistRange(addr unsafe.Pointer, len uintptr, isPmem bool) {
-	if isPmem {
+func PersistRange(addr unsafe.Pointer, len uintptr) {
+	if pmemInfo.isPmem {
 		pmemFuncs.flush(uintptr(addr), len)
 		pmemFuncs.fence()
 	} else {
@@ -51,8 +51,8 @@ func PersistRange(addr unsafe.Pointer, len uintptr, isPmem bool) {
 }
 
 // FlushRange - flush a range of persistent memory address
-func FlushRange(addr unsafe.Pointer, len uintptr, isPmem bool) {
-	if isPmem {
+func FlushRange(addr unsafe.Pointer, len uintptr) {
+	if pmemInfo.isPmem {
 		pmemFuncs.flush(uintptr(addr), len)
 	} else {
 		msyncRange(uintptr(addr), len)
