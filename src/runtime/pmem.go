@@ -86,6 +86,9 @@ var pmemInfo struct {
 	// to identify what regions in the heap store pointer values.
 	typeBitmap []byte
 
+	// The address at which the persistent memory file is mapped
+	mappedAddr uintptr
+
 	// The start address of the persistent memory region which the runtime manages.
 	// This is obtained by adding the offset value and header region size to the
 	// address at which the persistent memory file is mapped.
@@ -383,6 +386,7 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 		atomic.Store(&pmemInfo.initState, initNotDone)
 		return nil
 	}
+	pmemInfo.mappedAddr = (uintptr)(pmemMappedAddr)
 	pmemInfo.startAddr = (uintptr)(pmemMappedAddr) + reservePages<<pageShift
 
 	// hdrAddr is the address of the header section in persistent memory
@@ -488,7 +492,7 @@ func GetRoot() unsafe.Pointer {
 	if offset == 0 {
 		return nil
 	}
-	addr := pmemInfo.startAddr + offset
+	addr := pmemInfo.mappedAddr + offset
 	if !InPmem(addr) {
 		// The offset does not point to a persistent memory address. This may
 		// have happened due to some data corruption. Return a nil pointer so
@@ -509,7 +513,7 @@ func SetRoot(addr unsafe.Pointer) {
 	// Since the address at which the persistent memory region is mapped can vary
 	// across application invocation, store the offset to the root pointer instead
 	// of the actual root pointer value.
-	offset := uintptr(addr) - pmemInfo.startAddr
+	offset := uintptr(addr) - pmemInfo.mappedAddr
 	atomic.Store64((*uint64)(pmemInfo.rootAddr), uint64(offset))
 	PersistRange(pmemInfo.rootAddr, unsafe.Sizeof(offset))
 	unlock(&pmemInfo.rootLock)
