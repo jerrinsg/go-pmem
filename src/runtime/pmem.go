@@ -462,11 +462,10 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	// The end address of the persistent memory region
 	pmemInfo.endAddr = pmemInfo.startAddr + (usablePages << pageShift) - 1
 
-	var gcp int32
 	// Reconstruction
 	if !firstTime {
 		// Disable garbage collection during persistent memory initialization
-		gcp = setGCPercent(-1)
+		setGCPercent(-1)
 		// set needzero parameter of the reconstructed span as 1
 		s := spanOf(pmemInfo.startAddr)
 		if s == nil {
@@ -484,20 +483,32 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
 
-	// Restore gc percentage and call GC()
-	if !firstTime {
-		setGCPercent(gcp) // restore GC percentage
-		// Run GC so that unused memory in reconstructed spans are reclaimed
-		stw := debug.gcstoptheworld
-		// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a
-		// stop-the-world event
-		debug.gcstoptheworld = int32(gcForceBlockMode)
-		GC()
-		// restore gcstoptheworld
-		debug.gcstoptheworld = stw
-	}
-
 	return pmemMappedAddr
+}
+
+// EnableGC runs a full GC cycle as a stop-the-world event. This is written as a
+// separate function to PmemInit() so that the application can do any pointer
+// manipulation (such as swizzling) before a full GC cycle is run.
+// The argumnet gcp specifies garbage collection percentage and controls how
+// often GC is run (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
+// Default value of gcp is 100.
+// Users are required to initialize persistent memory as follows:
+// (1) Call PmemInit to initialize persistent memory
+// (2) Call EnableGC()
+func EnableGC(gcp int) {
+	if pmemInfo.initState != initDone {
+		println("EnableGC called before persistent memory initialization")
+		return
+	}
+	setGCPercent(int32(gcp)) // restore GC percentage
+	// Run GC so that unused memory in reconstructed spans are reclaimed
+	stw := debug.gcstoptheworld
+	// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a
+	// stop-the-world event
+	debug.gcstoptheworld = int32(gcForceBlockMode)
+	GC()
+	// restore gcstoptheworld
+	debug.gcstoptheworld = stw
 }
 
 // GetRoot returns the root pointer that is stored in the persistent memory
@@ -717,6 +728,10 @@ func pmemHeapBitsAddr(x uintptr) unsafe.Pointer {
 
 // Function to check that 'addr' is an address in the persistent memory range
 func InPmem(addr uintptr) bool {
-	return pmemInfo.initState == initDone && pmemInfo.startAddr <= addr &&
+	// InPmem() is called from GetRoot() during the persistent memory
+	// initialization process. Hence, aside from checking the address falls
+	// within the persistent memory range, also check that the initialization
+	// state is either initOngoing or initDone.
+	return pmemInfo.initState != initNotDone && pmemInfo.startAddr <= addr &&
 		addr <= pmemInfo.endAddr
 }
