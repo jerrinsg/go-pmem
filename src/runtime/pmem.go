@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"runtime/internal/atomic"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -27,10 +28,13 @@ const (
 	// between a first run and subsequent runs.
 	pmemHdrMagic = 0xABCDCBA
 
-	// Persistent memory region header size in bytes. This includes
-	// 8 bytes to store pmemHdrMagic, 8 bytes to record the size of the
-	// persistent memory region, and another 8 bytes to store the root pointer.
-	pmemHdrSize = 24
+	// Number of pointer-sized objects stored in the persistent memory header
+	// region. This includes the magic constant, the size information of the
+	// persistent memory region and the application root pointer
+	pmemNumHdrObjs = 3
+
+	// Persistent memory region header size in bytes.
+	pmemHdrSize = pmemNumHdrObjs * sys.PtrSize
 
 	// Golang manages its heap in arenas of 64MB. Enforce persistent memory
 	// initialization size to be a multiple of 64MB.
@@ -59,6 +63,17 @@ const (
 	initNotDone = iota // Persistent memory not initialiazed
 	initOngoing        // Persistent memory initialization ongoing
 	initDone           // Persistent memory initialization completed
+)
+
+// The order in which the magic constant, size information of the persistent memory
+// region, application root pointer, the span bitmap log section, and the heap
+// type bitmap log will be written in the persistent memory header region.
+const (
+	magicInd = iota
+	sizeInd
+	rootInd
+	spanInd
+	typeInd
 )
 
 // A volatile data-structure which stores all the necessary information about
@@ -392,10 +407,12 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	// hdrAddr is the address of the header section in persistent memory
 	hdrAddr := unsafe.Pointer(uintptr(pmemMappedAddr) + uintptr(offset))
 	// Cast hdrAddr as a pointer to a slice to easily do pointer manipulations
-	addresses := (*[4]int)(hdrAddr)
-	magicAddr := &addresses[0]
-	sizeAddr := &addresses[1]
-	rootAddr := &addresses[2]
+	// Use pmemNumHdrObjs + 1 as the size of the slice so that the last object
+	// points to the span bitmap.
+	addresses := (*[pmemNumHdrObjs + 1]int)(hdrAddr)
+	magicAddr := &addresses[magicInd]
+	sizeAddr := &addresses[sizeInd]
+	rootAddr := &addresses[rootInd]
 
 	firstTime := false
 	// Read the first 8 bytes of header section to check for magic constant
@@ -432,7 +449,7 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 
 	// usablePages is the actual number of pages usable by the allocator
 	usablePages := totalPages - reservePages
-	spanBitsAddr := unsafe.Pointer(&addresses[3])
+	spanBitsAddr := unsafe.Pointer(&addresses[spanInd])
 	// pmemInfo.spanBitmap is a slice with 'usablePages' number of entries,
 	// starting at address 'spanBitsAddr'
 	pmemInfo.spanBitmap = (*(*[1 << 28]uint32)(spanBitsAddr))[:usablePages]
