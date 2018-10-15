@@ -1903,6 +1903,12 @@ func typecheck1(n *Node, top int) (res *Node) {
 			}
 
 		case TMAP:
+			if n.Op == OPMAKE {
+				yyerror("creating a map in persistent memory not supported")
+				n.Type = nil
+				return n
+			}
+
 			if i < len(args) {
 				l = args[i]
 				i++
@@ -1923,6 +1929,11 @@ func typecheck1(n *Node, top int) (res *Node) {
 			n.Op = OMAKEMAP
 
 		case TCHAN:
+			if n.Op == OPMAKE {
+				yyerror("creating a channel in persistent memory not supported")
+				n.Type = nil
+				return n
+			}
 			l = nil
 			if i < len(args) {
 				l = args[i]
