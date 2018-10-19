@@ -1167,11 +1167,11 @@ opswitch:
 			r = typecheck(r, Erv)
 			n = r
 		} else {
-			persistent := isNotPersistent
+			memtype := isNotPersistent
 			if n.Op == OPNEW {
-				persistent = isPersistent
+				memtype = isPersistent
 			}
-			n = callnew(n.Type.Elem(), persistent)
+			n = callnew(n.Type.Elem(), memtype)
 		}
 
 	case OADDSTR:
@@ -1342,12 +1342,12 @@ opswitch:
 			len, cap := l, r
 
 			fnname := "makeslice64"
-			// The persistent parameter indicates if memory has to be allocated
+			// The memtype parameter indicates if memory has to be allocated
 			// from volatile memory or persistent memory. The parameter to be
 			// passed to mkcall1 has to be a *Node.
-			persistent := nodintconst(int64(isNotPersistent))
+			memtype := nodintconst(int64(isNotPersistent))
 			if n.Op == OPMAKESLICE {
-				persistent = nodintconst(int64(isPersistent))
+				memtype = nodintconst(int64(isPersistent))
 			}
 			argtype := types.Types[TINT64]
 
@@ -1361,7 +1361,7 @@ opswitch:
 			}
 
 			fn := syslook(fnname)
-			n.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype), persistent)
+			n.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, typename(t.Elem()), conv(len, argtype), conv(cap, argtype), memtype)
 			n.Left.SetNonNil(true)
 			n.List.Set2(conv(len, types.Types[TINT]), conv(cap, types.Types[TINT]))
 			n.Op = OSLICEHEADER
@@ -1958,15 +1958,15 @@ func walkprint(nn *Node, init *Nodes) *Node {
 	return r
 }
 
-// The persistent parameter indicates if memory has to be allocated from
+// The memtype parameter indicates if memory has to be allocated from
 // persistent heap or volatile heap.
-func callnew(t *types.Type, persistent int) *Node {
+func callnew(t *types.Type, memtype int) *Node {
 	if t.NotInHeap() {
 		yyerror("%v is go:notinheap; heap allocation disallowed", t)
 	}
 	dowidth(t)
 	fn := syslook("newobject")
-	if persistent == isPersistent {
+	if memtype == isPersistent {
 		fn = syslook("pnewobject")
 	}
 	fn = substArgTypes(fn, t)

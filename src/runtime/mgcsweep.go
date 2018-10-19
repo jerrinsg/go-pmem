@@ -338,7 +338,7 @@ func (s *mspan) sweep(preserve bool) bool {
 
 	if nfreed > 0 && spc.sizeclass() != 0 {
 		c.local_nsmallfree[spc.sizeclass()] += uintptr(nfreed)
-		res = mheap_.central[s.persistent][spc].mcentral.freeSpan(s, preserve, wasempty)
+		res = mheap_.central[s.memtype][spc].mcentral.freeSpan(s, preserve, wasempty)
 		// MCentral_FreeSpan updates sweepgen
 	} else if freeToHeap {
 		// Free large span to heap

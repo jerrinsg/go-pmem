@@ -1928,10 +1928,9 @@ func arrayAt(p unsafe.Pointer, i int, eltSize uintptr, whySafe string) unsafe.Po
 
 // grow grows the slice s so that it can hold extra more values, allocating
 // more capacity if needed. It also returns the old and new slice lengths.
-// persistent parameter indicates that underlying storage of 's' is in persistent
-// memory and that if s needs to be expanded, then new memory should also be
-// allocated in persistent memory.
-func grow(s Value, extra, persistent int) (Value, int, int) {
+// If s needs to be expanded, then memtype specifies whether memory should be
+// allocated from persistent memory or volatile memory.
+func grow(s Value, extra, memtype int) (Value, int, int) {
 	i0 := s.Len()
 	i1 := i0 + extra
 	if i1 < i0 {
@@ -1953,7 +1952,7 @@ func grow(s Value, extra, persistent int) (Value, int, int) {
 		}
 	}
 	var t Value
-	if persistent == isPersistent {
+	if memtype == isPersistent {
 		t = PMakeSlice(s.Type(), i1, m)
 	} else {
 		t = MakeSlice(s.Type(), i1, m)
@@ -1973,17 +1972,17 @@ func Append(s Value, x ...Value) Value {
 	return s
 }
 
-func appendSliceCore(s, t Value, persistent int) Value {
+func appendSliceCore(s, t Value, memtype int) Value {
 	s.mustBe(Slice)
 	t.mustBe(Slice)
 	typesMustMatch("reflect.AppendSlice", s.Type().Elem(), t.Type().Elem())
-	if persistent == isPersistent {
+	if memtype == isPersistent {
 		sh := (*sliceHeader)(s.ptr)
 		if !runtime.InPmem(uintptr(sh.Data)) {
 			panic("Invalid append slice - slice not in persistent memory")
 		}
 	}
-	s, i0, i1 := grow(s, t.Len(), persistent)
+	s, i0, i1 := grow(s, t.Len(), memtype)
 	Copy(s.Slice(i0, i1), t)
 	return s
 }
@@ -2207,7 +2206,7 @@ func Select(cases []SelectCase) (chosen int, recv Value, recvOK bool) {
 func unsafe_New(*rtype, int) unsafe.Pointer
 func unsafe_NewArray(*rtype, int, int) unsafe.Pointer
 
-func makeSliceCore(typ Type, len, cap, persistent int) Value {
+func makeSliceCore(typ Type, len, cap, memtype int) Value {
 	if typ.Kind() != Slice {
 		panic("reflect.MakeSlice of non-slice type")
 	}
@@ -2221,7 +2220,7 @@ func makeSliceCore(typ Type, len, cap, persistent int) Value {
 		panic("reflect.MakeSlice: len > cap")
 	}
 
-	s := sliceHeader{unsafe_NewArray(typ.Elem().(*rtype), cap, persistent), len, cap}
+	s := sliceHeader{unsafe_NewArray(typ.Elem().(*rtype), cap, memtype), len, cap}
 	return Value{typ.(*rtype), unsafe.Pointer(&s), flagIndir | flag(Slice)}
 }
 
@@ -2313,12 +2312,12 @@ func Zero(typ Type) Value {
 
 // New returns a Value representing a pointer to a new zero value
 // for the specified type. That is, the returned Value's Type is PtrTo(typ).
-func newCore(typ Type, persistent int) Value {
+func newCore(typ Type, memtype int) Value {
 	if typ == nil {
 		panic("reflect: New(nil)")
 	}
 	t := typ.(*rtype)
-	ptr := unsafe_New(t, persistent)
+	ptr := unsafe_New(t, memtype)
 	fl := flag(Ptr)
 	return Value{t.ptrTo(), ptr, fl}
 }

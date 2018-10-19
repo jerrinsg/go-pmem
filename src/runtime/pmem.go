@@ -249,7 +249,7 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 
 	// Initialize other metadata of s
 	s.state = mSpanInUse
-	s.persistent = isPersistent
+	s.memtype = isPersistent
 	s.spanclass = spc
 
 	// copying span initialization code from alloc_m() in mheap.go
@@ -335,7 +335,7 @@ func freeSpan(npages, base uintptr, needzero uint8) {
 	h := &mheap_
 	t := (*mspan)(h.spanalloc.alloc())
 	t.init(base, npages)
-	t.persistent = isPersistent
+	t.memtype = isPersistent
 
 	h.setSpan(t.base(), t)
 	h.setSpan(t.base()+t.npages*pageSize-1, t)
@@ -577,7 +577,7 @@ func growPmemRegion(npages, reservePages uintptr) unsafe.Pointer {
 	// Create a fake span and free it, so that the right coalescing happens.
 	s := (*mspan)(h.spanalloc.alloc())
 	s.init(spanBase, npages-reservePages)
-	s.persistent = isPersistent
+	s.memtype = isPersistent
 	h.setSpan(s.base(), s)
 	h.setSpan(s.base()+s.npages*pageSize-1, s)
 	s.state = mSpanManual
@@ -588,7 +588,7 @@ func growPmemRegion(npages, reservePages uintptr) unsafe.Pointer {
 
 // Function to log a span allocation.
 func logSpanAlloc(s *mspan) {
-	if s.persistent == isNotPersistent {
+	if s.memtype == isNotPersistent {
 		throw("Invalid span passed to logSpanAlloc")
 	}
 
@@ -627,7 +627,7 @@ func logSpanAlloc(s *mspan) {
 // Function to log that a span has been completely freed. This is done by
 // writing 0 to the bitmap entry corresponding to this span.
 func logSpanFree(s *mspan) {
-	if s.persistent == isNotPersistent {
+	if s.memtype == isNotPersistent {
 		throw("Invalid span passed to logSpanFree")
 	}
 

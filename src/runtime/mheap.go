@@ -342,7 +342,7 @@ type mspan struct {
 	limit       uintptr    // end of data in span
 	speciallock mutex      // guards specials list
 	specials    *special   // linked list of special records sorted by offset.
-	persistent  int        // flag to indicate this is a persistent memory span
+	memtype     int        // the type of memory that this span represents (persistent/volatile)
 }
 
 func (s *mspan) base() uintptr {
@@ -375,7 +375,7 @@ func (s *mspan) scavenge() uintptr {
 	// start and end must be rounded in, otherwise madvise
 	// will round them *out* and release more memory
 	// than we want.
-	if s.persistent == isPersistent {
+	if s.memtype == isPersistent {
 		throw("scavenge persistent memory span not supported")
 	}
 	start, end := s.physPageBounds()
@@ -664,8 +664,8 @@ retry:
 
 // Sweeps and reclaims at least npage pages into heap.
 // Called before allocating npage pages.
-func (h *mheap) reclaim(npage uintptr, persistent int) {
-	if h.reclaimList(&h.busy[persistent], npage) != 0 {
+func (h *mheap) reclaim(npage uintptr, memtype int) {
+	if h.reclaimList(&h.busy[memtype], npage) != 0 {
 		return // Bingo!
 	}
 
@@ -690,11 +690,11 @@ func (h *mheap) reclaim(npage uintptr, persistent int) {
 // alloc_m must run on the system stack because it locks the heap, so
 // any stack growth during alloc_m would self-deadlock.
 //
-// The persistent parameter indicates if the memory has to be allocated from
+// The memtype parameter indicates if the memory has to be allocated from
 // persistent memory or volatile memory.
 //
 //go:systemstack
-func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persistent int) *mspan {
+func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, memtype int) *mspan {
 	_g_ := getg()
 	lock(&h.lock)
 
@@ -711,7 +711,7 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persiste
 		if trace.enabled {
 			traceGCSweepStart()
 		}
-		h.reclaim(npage, persistent)
+		h.reclaim(npage, memtype)
 		if trace.enabled {
 			traceGCSweepDone()
 		}
@@ -723,7 +723,7 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persiste
 	memstats.tinyallocs += uint64(_g_.m.mcache.local_tinyallocs)
 	_g_.m.mcache.local_tinyallocs = 0
 
-	s := h.allocSpanLocked(npage, &memstats.heap_inuse, persistent)
+	s := h.allocSpanLocked(npage, &memstats.heap_inuse, memtype)
 	if s != nil {
 		// Record span info, because gc needs to be
 		// able to map interior pointer to containing span.
@@ -755,7 +755,7 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persiste
 			mheap_.nlargealloc++
 			atomic.Xadd64(&memstats.heap_live, int64(npage<<_PageShift))
 			// Swept spans are at the end of lists.
-			h.busy[persistent].insertBack(s)
+			h.busy[memtype].insertBack(s)
 		}
 	}
 	// heap_scan and heap_live were updated.
@@ -787,15 +787,15 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool, persiste
 //
 // If needzero is true, the memory for the returned span will be zeroed.
 //
-// The persistent parameter indicates if the memory has to be allocated from
+// The memtype parameter indicates if the memory has to be allocated from
 // persistent memory or volatile memory.
-func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero bool, persistent int) *mspan {
+func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero bool, memtype int) *mspan {
 	// Don't do any operations that lock the heap on the G stack.
 	// It might trigger stack growth, and the stack growth code needs
 	// to be able to allocate heap.
 	var s *mspan
 	systemstack(func() {
-		s = h.alloc_m(npage, spanclass, large, persistent)
+		s = h.alloc_m(npage, spanclass, large, memtype)
 	})
 
 	if s != nil {
@@ -803,7 +803,7 @@ func (h *mheap) alloc(npage uintptr, spanclass spanClass, large bool, needzero b
 			memclrNoHeapPointers(unsafe.Pointer(s.base()), s.npages<<_PageShift)
 		}
 		s.needzero = 0
-		s.persistent = persistent
+		s.memtype = memtype
 	}
 	return s
 }
@@ -869,37 +869,37 @@ func (h *mheap) setSpans(base, npage uintptr, s *mspan) {
 // Allocates a span of the given size.  h must be locked.
 // The returned span has been removed from the
 // free structures, but its state is still mSpanFree.
-// The persistent parameter indicates if the memory has to be allocated from
+// The memtype parameter indicates if the memory has to be allocated from
 // persistent memory or volatile memory.
-func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64, persistent int) *mspan {
+func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64, memtype int) *mspan {
 	var s *mspan
 
 	// First, attempt to allocate from free spans, then from
 	// scavenged spans, looking for best fit in each.
-	s = h.free[persistent].remove(npage)
+	s = h.free[memtype].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
-	s = h.scav[persistent].remove(npage)
+	s = h.scav[memtype].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
 	// On failure, grow the heap and try again.
-	if !h.grow(npage, persistent) {
+	if !h.grow(npage, memtype) {
 		return nil
 	}
-	s = h.free[persistent].remove(npage)
+	s = h.free[memtype].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
-	s = h.scav[persistent].remove(npage)
+	s = h.scav[memtype].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
 	return nil
 
 HaveSpan:
-	if s.persistent != persistent {
+	if s.memtype != memtype {
 		throw("allocSpanLocked: got incorrect span in h.free")
 	}
 	// Mark span in use.
@@ -919,7 +919,7 @@ HaveSpan:
 		// Trim extra and put it back in the heap.
 		t := (*mspan)(h.spanalloc.alloc())
 		t.init(s.base()+npage<<_PageShift, s.npages-npage)
-		t.persistent = persistent
+		t.memtype = memtype
 		s.npages = npage
 		h.setSpan(t.base()-1, s)
 		h.setSpan(t.base(), t)
@@ -963,17 +963,17 @@ HaveSpan:
 // returning whether it worked.
 //
 // h must be locked.
-// The persistent parameter indicates if the memory should be allocated from
+// The memtype parameter indicates if the memory should be allocated from
 // persistent memory or volatile memory.
-func (h *mheap) grow(npage uintptr, persistent int) bool {
+func (h *mheap) grow(npage uintptr, memtype int) bool {
 	ask := npage << _PageShift
-	v, size := h.sysAlloc(ask, persistent)
+	v, size := h.sysAlloc(ask, memtype)
 	if v == nil {
 		print("runtime: out of memory: cannot allocate ", ask, "-byte block (", memstats.heap_sys, " in use)\n")
 		return false
 	}
 
-	if persistent == isNotPersistent {
+	if memtype == isNotPersistent {
 		// Scavenge some pages out of the free treap to make up for
 		// the virtual memory space we just allocated. We prefer to
 		// scavenge the largest spans first since the cost of scavenging
@@ -987,7 +987,7 @@ func (h *mheap) grow(npage uintptr, persistent int) bool {
 	// right coalescing happens.
 	s := (*mspan)(h.spanalloc.alloc())
 	s.init(uintptr(v), size/pageSize)
-	s.persistent = persistent
+	s.memtype = memtype
 	h.setSpans(s.base(), s.npages, s)
 	atomic.Store(&s.sweepgen, h.sweepgen)
 	s.state = mSpanInUse
@@ -1039,8 +1039,8 @@ func (h *mheap) freeSpan(s *mspan, large bool) {
 //
 //go:systemstack
 func (h *mheap) freeManual(s *mspan, stat *uint64) {
-	if s.persistent == isPersistent {
-		throw("freeManual: got a persistent span")
+	if s.memtype == isPersistent {
+		throw("freeManual: got a persistent memory span")
 	}
 	s.needzero = 1
 	lock(&h.lock)
@@ -1075,7 +1075,7 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 	}
 	s.state = mSpanFree
 	if s.inList() {
-		h.busy[s.persistent].remove(s)
+		h.busy[s.memtype].remove(s)
 	}
 
 	// Stamp newly unused spans. The scavenger will use that
@@ -1094,12 +1094,12 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 	// spans. Also, span logging need to be enabled only after persistent memory
 	// initialization is completed. A call comes to this function during persistent
 	// memory initialization, during which logging need not be done.
-	if s.persistent == isPersistent && pmemInfo.initState == initDone {
+	if s.memtype == isPersistent && pmemInfo.initState == initDone {
 		logSpanFree(s)
 	}
 
 	// Coalesce with earlier, later spans.
-	if before := spanOf(s.base() - 1); before != nil && before.state == mSpanFree && before.persistent == s.persistent {
+	if before := spanOf(s.base() - 1); before != nil && before.state == mSpanFree && before.memtype == s.memtype {
 		// Now adjust s.
 		s.startAddr = before.startAddr
 		s.npages += before.npages
@@ -1108,9 +1108,9 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 		// The size is potentially changing so the treap needs to delete adjacent nodes and
 		// insert back as a combined node.
 		if !before.scavenged {
-			h.free[before.persistent].removeSpan(before)
+			h.free[before.memtype].removeSpan(before)
 		} else {
-			h.scav[before.persistent].removeSpan(before)
+			h.scav[before.memtype].removeSpan(before)
 			needsScavenge = true
 			prescavenged += before.released()
 		}
@@ -1119,14 +1119,14 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 	}
 
 	// Now check to see if next (greater addresses) span is free and can be coalesced.
-	if after := spanOf(s.base() + s.npages*pageSize); after != nil && after.state == mSpanFree && after.persistent == s.persistent {
+	if after := spanOf(s.base() + s.npages*pageSize); after != nil && after.state == mSpanFree && after.memtype == s.memtype {
 		s.npages += after.npages
 		s.needzero |= after.needzero
 		h.setSpan(s.base()+s.npages*pageSize-1, s)
 		if !after.scavenged {
-			h.free[after.persistent].removeSpan(after)
+			h.free[after.memtype].removeSpan(after)
 		} else {
-			h.scav[after.persistent].removeSpan(after)
+			h.scav[after.memtype].removeSpan(after)
 			needsScavenge = true
 			prescavenged += after.released()
 		}
@@ -1151,9 +1151,9 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 
 	// Insert s into the appropriate treap.
 	if s.scavenged {
-		h.scav[s.persistent].insert(s)
+		h.scav[s.memtype].insert(s)
 	} else {
-		h.free[s.persistent].insert(s)
+		h.free[s.memtype].insert(s)
 	}
 }
 
@@ -1280,9 +1280,9 @@ func (span *mspan) init(base uintptr, npages uintptr) {
 	span.freeindex = 0
 	span.allocBits = nil
 	span.gcmarkBits = nil
-	// Initialize a span as not being persistent by default. This will be changed explicitly
-	// if the span is to be used for persistent memory.
-	span.persistent = isNotPersistent
+	// Initialize the span memory type as volatile memory. This will be changed
+	// explicitly if the span is to be used for persistent memory.
+	span.memtype = isNotPersistent
 }
 
 func (span *mspan) inList() bool {
