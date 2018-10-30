@@ -125,6 +125,10 @@ func main() {
 		}
 	}
 
+	if gohostarch != "amd64" || gohostos != "linux" {
+		fatalf("compilation supported only on linux amd64")
+	}
+
 	if gohostarch == "arm" || gohostarch == "mips64" || gohostarch == "mips64le" {
 		maxbg = min(maxbg, runtime.NumCPU())
 	}

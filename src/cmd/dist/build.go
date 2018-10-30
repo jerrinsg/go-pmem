@@ -128,6 +128,9 @@ func xinit() {
 	if find(goos, okgoos) < 0 {
 		fatalf("unknown $GOOS %s", goos)
 	}
+	if goos != "linux" {
+		fatalf("target os should be linux")
+	}
 
 	b = os.Getenv("GOARM")
 	if b == "" {
@@ -178,6 +181,9 @@ func xinit() {
 	goarch = b
 	if find(goarch, okgoarch) < 0 {
 		fatalf("unknown $GOARCH %s", goarch)
+	}
+	if goarch != "amd64" {
+		fatalf("target architecture should be amd64")
 	}
 
 	b = os.Getenv("GO_EXTLINK_ENABLED")
