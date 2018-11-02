@@ -173,7 +173,9 @@ func sysUnused(v unsafe.Pointer, n uintptr) {
 func sysUsed(v unsafe.Pointer, n uintptr) {
 }
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+// memtype specifies if memory should be allocated in persistent memory or
+// volatile memory. Currently unsupported.
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	// sysReserve has already allocated all heap memory,
 	// but has not adjusted stats.
 	mSysStatInc(sysStat, n)

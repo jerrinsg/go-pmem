@@ -63,6 +63,8 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 func currentMemory() int32
 func growMemory(pages int32) int32
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+// memtype specifies if memory should be allocated in persistent memory or
+// volatile memory. Currently unsupported.
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	mSysStatInc(sysStat, n)
 }
