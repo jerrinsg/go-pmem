@@ -358,6 +358,10 @@ func freeSpan(npages, base uintptr, needzero uint8) {
 // This function returns the address at which the file was mapped.
 // On error, a nil value is returned
 func PmemInit(fname string, size, offset int) unsafe.Pointer {
+	if GOOS != "linux" || GOARCH != "amd64" {
+		throw("unsupported architecture")
+	}
+
 	if (size-offset) < pmemInitSize || size%pmemInitSize != 0 {
 		println(`Persistent memory initialization requires a minimum of 64MB
 			for initialization (size-offset) and size needs to be a
