@@ -191,7 +191,7 @@ func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
 	}
 
 	// Recursively search the right subtree
-	if root.right != nil && root.right.npagesKey >= npages {
+	if root.right != nil {
 		if sr := treapSearch(root.right, baseAddr, npages); sr != nil {
 			return sr
 		}
@@ -224,7 +224,7 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	lock(&h.lock)
 	s := h.searchSpanLocked(base, npages)
 	if s == nil {
-		println("Unable to reconstruct span for address ", base)
+		println("Unable to reconstruct span for address ", hex(base))
 		throw("Unable to complete persistent memory metadata reconstruction")
 	}
 
