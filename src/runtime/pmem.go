@@ -357,29 +357,26 @@ func freeSpan(npages, base uintptr, needzero uint8) {
 // runtime-managed heap.
 // This function returns the address at which the file was mapped.
 // On error, a nil value is returned
-func PmemInit(fname string, size, offset int) unsafe.Pointer {
+func PmemInit(fname string, size, offset int) (unsafe.Pointer, error) {
 	if GOOS != "linux" || GOARCH != "amd64" {
-		throw("unsupported architecture")
+		return nil, error(errorString("Unsupported architecture"))
 	}
 
 	if (size-offset) < pmemInitSize || size%pmemInitSize != 0 {
-		println(`Persistent memory initialization requires a minimum of 64MB
-			for initialization (size-offset) and size needs to be a
-			multiple of 64MB`)
-		return nil
+		return nil, error(errorString(`Persistent memory initialization requires
+			a minimum of 64MB for initialization and size needs to be a
+			multiple of 64MB`))
 	}
 
 	if offset%pageSize != 0 {
-		println(`Persistent memory initialization requires offset to be a
-			multiple of page size`)
-		return nil
+		return nil, error(errorString(`Persistent memory initialization requires
+			offset to be a multiple of page size`))
 	}
 
 	// Change persistent memory initialization state from not-done to ongoing
 	if !atomic.Cas(&pmemInfo.initState, initNotDone, initOngoing) {
-		println(`Persistent memory is already initialized or initialization is
-			ongoing`)
-		return nil
+		return nil, error(errorString(`Persistent memory is already initialized
+			or initialization is ongoing`))
 	}
 
 	// Set the persistent memory file name. This will be used to map the file
@@ -403,7 +400,7 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	pmemMappedAddr := growPmemRegion(totalPages, reservePages)
 	if pmemMappedAddr == nil {
 		atomic.Store(&pmemInfo.initState, initNotDone)
-		return nil
+		return nil, error(errorString("Persistent memory initialization failed"))
 	}
 	pmemInfo.mappedAddr = (uintptr)(pmemMappedAddr)
 	pmemInfo.startAddr = (uintptr)(pmemMappedAddr) + reservePages<<pageShift
@@ -424,11 +421,11 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 		println("Not a first time initialization")
 
 		if *sizeAddr != size {
-			println("Initialization size does not match")
+			err := error(errorString("Initialization size does not match"))
 			// Unmap the mapped region
 			sysFree(pmemMappedAddr, uintptr(size), &memstats.heap_sys)
 			atomic.Store(&pmemInfo.initState, initNotDone)
-			return nil
+			return nil, err
 		}
 	} else {
 		println("First time initialization")
@@ -487,7 +484,7 @@ func PmemInit(fname string, size, offset int) unsafe.Pointer {
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
 
-	return pmemMappedAddr
+	return pmemInfo.root, nil
 }
 
 // EnableGC runs a full GC cycle as a stop-the-world event. This is written as a
