@@ -355,8 +355,8 @@ func freeSpan(npages, base uintptr, needzero uint8) {
 // allocator and GC will not manage this space. This can be used by the
 // application to store any application-specific data that need not be in the
 // runtime-managed heap.
-// This function returns the address at which the file was mapped.
-// On error, a nil value is returned
+// This function returns a tuple (addr, error). addr is the application root
+// pointer. error indicates if PmemInit() completed successfully.
 func PmemInit(fname string, size, offset int) (unsafe.Pointer, error) {
 	if GOOS != "linux" || GOARCH != "amd64" {
 		return nil, error(errorString("Unsupported architecture"))
