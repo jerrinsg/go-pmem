@@ -845,6 +845,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 	shouldhelpgc := false
 	dataSize := size
 	c := gomcache()
+	// newSpan indicates if a new span was allocated to satisfy the allocation request
+	newSpan := false
+	var span *mspan
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
 
@@ -898,13 +901,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span := c.alloc[memtype][tinySpanClass]
+			span = c.alloc[memtype][tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(tinySpanClass, memtype)
-				if memtype == isPersistent {
-					logSpanAlloc(span)
-				}
+				newSpan = true
 			}
 			x = unsafe.Pointer(v)
 			(*[2]uint64)(x)[0] = 0
@@ -925,13 +926,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span := c.alloc[memtype][spc]
+			span = c.alloc[memtype][spc]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(spc, memtype)
-				if memtype == isPersistent {
-					logSpanAlloc(span)
-				}
+				newSpan = true
 			}
 			x = unsafe.Pointer(v)
 			if needzero && span.needzero != 0 {
@@ -939,17 +938,27 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			}
 		}
 	} else {
-		var s *mspan
 		shouldhelpgc = true
 		systemstack(func() {
-			s = largeAlloc(size, needzero, noscan, memtype)
+			span = largeAlloc(size, needzero, noscan, memtype)
 		})
-		s.freeindex = 1
-		s.allocCount = 1
-		x = unsafe.Pointer(s.base())
-		size = s.elemsize
-		if memtype == isPersistent {
-			logSpanAlloc(s)
+		span.freeindex = 1
+		span.allocCount = 1
+		x = unsafe.Pointer(span.base())
+		size = span.elemsize
+		newSpan = true
+	}
+
+	if newSpan && memtype == isPersistent {
+		logSpanAlloc(span)
+		if noscan {
+			// This is a noscan (no pointer in object) object allocation request.
+			// We do not clear heap type bits on each noscan object allocation
+			// request. Instead, when a new span is allocated to satisfy the
+			// noscan allocation request, we clear the heap type bits for the
+			// whole span.
+			sz := span.npages << pageSize // compute total span size
+			clearHeapBits(span.base(), sz)
 		}
 	}
 

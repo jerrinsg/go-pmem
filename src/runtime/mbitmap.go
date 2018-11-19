@@ -967,6 +967,10 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 				throw("heapBitsSetType: scan bit missing")
 			}
 		}
+		if shouldLog {
+			h := heapBitsForAddr(x)
+			logHeapBits(x, h.bitp, h.bitp)
+		}
 		return
 	}
 
@@ -1363,6 +1367,11 @@ Phase3:
 		}
 	}
 
+	// In all code paths up till this point, hbitp will be set as the address of
+	// the next byte where heap bits should be written. Hence the last address at
+	// which heap bits were written into is hbitp-1
+	endAddr = subtract1(hbitp)
+
 	// Write final partial bitmap byte if any.
 	// We know w > nw, or else we'd still be in the loop above.
 	// It can be bigger only due to the 4 entries in hb that it counts.
@@ -1373,9 +1382,9 @@ Phase3:
 	// existing bits.
 	if w == nw+2 {
 		*hbitp = *hbitp&^(bitPointer|bitScan|(bitPointer|bitScan)<<heapBitsShift) | uint8(hb)
+		endAddr = hbitp
 	}
 
-	endAddr = hbitp
 	if shouldLog {
 		logHeapBits(x, startAddr, endAddr)
 	}
