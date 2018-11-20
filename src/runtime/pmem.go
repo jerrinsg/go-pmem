@@ -211,7 +211,10 @@ func (h *mheap) searchSpanLocked(baseAddr uintptr, npages int) *mspan {
 	// Check the free treap to see if it has a large span that can
 	// contain the required span
 	treapRoot := h.free[isPersistent].treap
-	s := treapSearch(treapRoot, baseAddr, uintptr(npages))
+	var s *mspan
+	systemstack(func() {
+		s = treapSearch(treapRoot, baseAddr, uintptr(npages))
+	})
 	return s
 }
 
