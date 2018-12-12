@@ -15,17 +15,25 @@ const (
 
 	_O_RDRW = 0x0002 // open for reading and writing
 	_O_EXCL = 0x0800 // exclusive mode - error if file already exists
+
+	// the physical page size
+	sysPageSize = 4096
 )
 
-// PmapFile creates or opens the file passed as argument and maps it to memory.
+// mapFile creates or opens the file passed as argument and maps it to memory.
 // It returns the address  at which the file was mapped, a boolean value to
 // indicate if the path is on a persistent memory device, and an error value.
 // 'path' points to the file to be mapped, 'len' is the file length to be mapped
 // in memory, 'flags' and 'mode' are the values to be passed to the file open
 // system call. Supported flags are: fileCreate and fileExcl
+// 'off' is the offset in the file.
 // 'mapAddr' is the address at which the caller wants to map the file. It can be
 // set as nil if the caller has no preference on the mapping address.
-func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
+// If the file length is less than the region requested to be mapped, then the
+// file will be extended to accommodate the map request.
+// Some of the code layout taken from PMDK's libpmem library.
+func mapFile(path string, len, flags, mode, off int,
+	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
 	openFlags := _O_RDRW
 	delFileOnErr := false
 	err = _EINVAL
@@ -35,36 +43,38 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 		return
 	}
 
+	if off%sysPageSize != 0 {
+		println("Offset must be a multiple of page size")
+		return
+	}
+
 	devDax := isFileDevDax(path)
-	if devDax {
-		if flags & ^fileDaxValidFlags != 0 {
-			println("Flag unsupported for Device DAX")
+	if !devDax {
+		if flags&fileCreate != 0 {
+			if len < 0 {
+				println("Invalid file length")
+				return
+			}
+			openFlags |= _O_CREAT
+		}
+
+		if flags&fileExcl != 0 {
+			openFlags |= _O_EXCL
+		}
+
+		if (len != 0) && (flags&fileCreate == 0) {
+			println("Non-zero 'len' not allowed without fileCreate flag")
 			return
 		}
-		// ignore all of the flags for devdax
-		flags = 0
-	}
 
-	if flags&fileCreate != 0 {
-		if len < 0 {
-			println("Invalid file length")
+		if (len == 0) && (flags&fileCreate != 0) {
+			println("Zero 'len' not allowed with fileCreate flag")
 			return
 		}
-		openFlags |= _O_CREAT
-	}
 
-	if flags&fileExcl != 0 {
-		openFlags |= _O_EXCL
-	}
-
-	if (len != 0) && (flags&fileCreate == 0) {
-		println("Non-zero 'len' not allowed without fileCreate flag")
-		return
-	}
-
-	if (len == 0) && (flags&fileCreate != 0) {
-		println("Zero 'len' not allowed with fileCreate flag")
-		return
+		if (flags&fileCreate != 0) && (flags&fileExcl != 0) {
+			delFileOnErr = true
+		}
 	}
 
 	pathArray := []byte(path)
@@ -75,22 +85,30 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 	}
 
 	if devDax {
-		actualLen := utilGetFileSize(int(fd))
-		if actualLen < 0 {
+		if flags & ^fileDaxValidFlags != 0 {
+			println("Flag unsupported for Device DAX")
+			return
+		}
+		if off != 0 {
+			println("Offset not supported for Device DAX")
+			return
+		}
+
+		devSize := utilDevDaxSize(int(fd))
+		if devSize < 0 {
 			println("Unable to read Device DAX size")
 			return
 		}
-		if len != 0 && len != actualLen {
+		if len != 0 && len != devSize {
 			println("Device DAX length must be either 0 or the exact size of the device")
 			return
 		}
+		len = devSize
+		// ignore all of the flags for devdax
+		flags = 0
 	}
 
-	if (flags&fileCreate != 0) && (flags&fileExcl != 0) {
-		delFileOnErr = true
-	}
-
-	addr, isPmem, err = mapFd(fd, flags, len, mapAddr)
+	addr, isPmem, err = mapFd(fd, flags, len, off, devDax, mapAddr)
 	if err != 0 && delFileOnErr {
 		unlinkFile(path)
 	}
@@ -98,27 +116,27 @@ func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr u
 	return
 }
 
-func mapFd(fd int32, flags, len int, mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
-	if flags&fileCreate != 0 {
-		// set the length of the file to 'len'
-		// extend or truncate existing file
-		if err = int(ftruncate(uintptr(fd), uintptr(len))); err != 0 {
+func mapFd(fd int32, flags, len, off int, devdax bool,
+	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
+	actualLen := getFileSize(int(fd), devdax)
+	if actualLen < 0 {
+		println("mapFd: Get file size failed")
+		err = actualLen
+		return
+	}
+
+	if actualLen < (off + len) {
+		// Need to extend the file to map the file
+		// set the length of the file to 'off+len'
+		if err = int(ftruncate(uintptr(fd), uintptr(len+off))); err != 0 {
 			println("mapFd: ftruncate() failed")
 			return
 		}
-		if err = int(fallocate(uintptr(fd), 0, 0, uintptr(len))); err != 0 {
+		if err = int(fallocate(uintptr(fd), 0, uintptr(off), uintptr(len))); err != 0 {
 			println("mapFd: fallocate() failed")
 			return
 		}
-	} else {
-		actualLen := utilGetFileSize(int(fd))
-		if actualLen < 0 {
-			println("mapFd: Get file size failed")
-			err = actualLen
-			return
-		}
-		len = actualLen
 	}
 
-	return utilMap(mapAddr, fd, len, __MAP_SHARED, false)
+	return utilMap(mapAddr, fd, len, __MAP_SHARED, off, false)
 }

@@ -15,6 +15,7 @@ const (
 	S_IFMT               = 0xf000
 	S_IFCHR              = 0x2000
 	PATH_MAX             = 256
+	MAX_SIZE_LENGTH      = 64
 )
 
 type timespec_t struct {
@@ -41,35 +42,50 @@ type stat_t struct {
 	x__unused [3]int64
 }
 
+var (
+	// sizebuf is used by utilDevDaxSize. runtime package cannot have local
+	// variables escape to the heap. Hence sizebuf is kept as a global buffer
+	// for file read operation.
+	sizebuf [MAX_SIZE_LENGTH]byte
+)
+
 // A utility function to map a persistent memory file in the address space.
 // This function first tries to map the file with MAP_SYNC flag. This succeeds
 // only if the device the file is on supports direct-access (DAX). If this
 // fails, then a normal mapping of the file is done.
-func utilMap(mapAddr unsafe.Pointer, fd int32, len, flags int, rdonly bool) (unsafe.Pointer, bool, int) {
+func utilMap(mapAddr unsafe.Pointer, fd int32, len, flags, off int,
+	rdonly bool) (unsafe.Pointer, bool, int) {
 	protection := _PROT_READ
 	if !rdonly {
 		protection |= _PROT_WRITE
 	}
+
 	if mapAddr != nil {
 		flags |= _MAP_FIXED
 	}
 
 	p, err := mmap(mapAddr, uintptr(len), int32(protection),
-		int32(flags|_MAP_SHARED_VALIDATE|_MAP_SYNC), fd, 0)
+		int32(flags|_MAP_SHARED_VALIDATE|_MAP_SYNC), fd, uint32(off))
 	if err == 0 {
 		// Mapping with MAP_SYNC succeeded. Return the mapped address and a boolean
 		// value 'true' to indicate this file is indeed on a persistent memory device.
 		return p, true, err
 	} else if err == _EOPNOTSUPP || err == _EINVAL {
-		p, err = mmap(mapAddr, uintptr(len), int32(protection), int32(flags), fd, 0)
+		p, err = mmap(mapAddr, uintptr(len), int32(protection), int32(flags), fd, uint32(off))
 		return p, false, err
 	}
-
 	return p, false, err
 }
 
+func getFileSize(fd int, devDax bool) int {
+	if devDax {
+		return utilDevDaxSize(fd)
+	}
+	return utilFileSize(fd)
+}
+
 // A helper function to get file size
-func utilGetFileSize(fd int) int {
+func utilFileSize(fd int) int {
 	var st stat_t
 	if ret := fstat(uintptr(fd), uintptr(unsafe.Pointer(&st))); ret < 0 {
 		return int(ret)
@@ -121,6 +137,29 @@ func utilIsFdDevDax(fd int32) bool {
 	return resolvedPath[len(resolvedPath)-9:] == "class/dax"
 }
 
+// A helper function to get the size of a device dax
+func utilDevDaxSize(fd int) int {
+	var st stat_t
+	if fstat(uintptr(fd), uintptr(unsafe.Pointer(&st))) < 0 {
+		println("utilDevDaxSize: Error fstat of file")
+		return -1
+	}
+
+	devSizePath := "/sys/dev/char/" + uintToString(majorNum(st.rdev)) + ":" +
+		uintToString(minorNum(st.rdev)) + "/size"
+	sizeArray := []byte(devSizePath)
+	sFd := open(&sizeArray[0], _O_RDONLY, 0)
+	if sFd < 0 {
+		println("Error opening device dax size file")
+		return -1
+	}
+
+	n := read(sFd, unsafe.Pointer(&sizebuf[0]), MAX_SIZE_LENGTH)
+	sz := stringToInt(string(sizebuf[:n]))
+
+	return sz
+}
+
 // readLink is a helper function to call the readlink system call. It casts the
 // arguments to the required datatype and invokes the system call.
 func readLink(path string) string {
@@ -159,4 +198,20 @@ func uintToString(num uint) string {
 		b[i], b[j] = b[j], b[i]
 	}
 	return string(b[:ind])
+}
+
+// A helper function to convert a string to an int
+// This is a simple implementation and supports only positive decimal values
+func stringToInt(s string) int {
+	var n uint64
+	for i := 0; i < len(s); i++ {
+		d := s[i]
+		// skip unrecognized characters
+		if '0' <= d && d <= '9' {
+			v := d - '0'
+			n *= uint64(10)
+			n += uint64(v)
+		}
+	}
+	return int(n)
 }
