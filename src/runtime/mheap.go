@@ -343,6 +343,8 @@ type mspan struct {
 	speciallock mutex      // guards specials list
 	specials    *special   // linked list of special records sorted by offset.
 	memtype     int        // the type of memory that this span represents (persistent/volatile)
+
+	pArena uintptr // the pointer to the persistent memory arena header
 }
 
 func (s *mspan) base() uintptr {
@@ -983,11 +985,39 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		h.scavengeLargest(size)
 	}
 
+	allocSize := size
+	var mdSize, offset uintptr
+	var arenaPtr *pArena
+
+	// Write the header data for the new persistent memory arena
+	if memtype == isPersistent {
+		if pmemInfo.nextMapOffset == 0 {
+			// This is the first time heap growth. The first arena stores the
+			// global persistent memory header as well, so leave space for that
+			offset = pmemHeaderSize
+		}
+
+		mdSize, allocSize = arenaLayout(size, offset)
+		arenaPtr = (*pArena)(unsafe.Pointer(uintptr(v) + offset))
+		arenaPtr.size = int(size - offset)
+		arenaPtr.mapAddr = uintptr(v) + offset
+		arenaPtr.magic = hdrMagic // todo - replace this with sth like a checksum
+		PersistRange(unsafe.Pointer(arenaPtr), unsafe.Sizeof(*arenaPtr))
+
+		// Increment the mapped size in persistent memory header
+		pmemHeader.mappedSize += int(size - offset)
+		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), unsafe.Sizeof(size))
+
+		// Increment the next map offset
+		pmemInfo.nextMapOffset += int(size)
+	}
+
 	// Create a fake "in use" span and free it, so that the
 	// right coalescing happens.
 	s := (*mspan)(h.spanalloc.alloc())
-	s.init(uintptr(v), size/pageSize)
+	s.init(uintptr(v)+mdSize, allocSize/pageSize)
 	s.memtype = memtype
+	s.pArena = uintptr(unsafe.Pointer(arenaPtr))
 	h.setSpans(s.base(), s.npages, s)
 	atomic.Store(&s.sweepgen, h.sweepgen)
 	s.state = mSpanInUse

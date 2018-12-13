@@ -5,6 +5,11 @@ import (
 	"unsafe"
 )
 
+const (
+	// The size of the global header section in persistent memory file
+	pmemHeaderSize = unsafe.Sizeof(pHeader{})
+)
+
 // These constants indicate the possible swizzle state.
 const (
 	swizzleDone = iota
@@ -23,13 +28,19 @@ const (
 	isNotPersistent = 0
 	isPersistent    = 1
 
+	// A magic constant that will be written to the first 8 bytes of the
+	// persistent memory region. This constant will then help to differentiate
+	// between a first run and subsequent runs.
+	hdrMagic = 0xABCDCBA
+
 	// maxMemTypes represents the memory types supported - persistent memory
 	// and volatile memory.
 	maxMemTypes = 2
 )
 
 var (
-	memTypes = []int{isPersistent, isNotPersistent}
+	memTypes   = []int{isPersistent, isNotPersistent}
+	pmemHeader *pHeader
 )
 
 // The structure of the persistent memory file header region
@@ -76,6 +87,10 @@ var pmemInfo struct {
 	// Persistent memory initialization state
 	// This is used to prevent concurrent/multiple persistent memory initialization
 	initState uint32
+
+	// nextMapOffset stores the offset in the persistent memory file at which
+	// it should be mapped into memory next.
+	nextMapOffset int
 }
 
 // PmemInit is the persistent memory initialization function.
@@ -98,6 +113,33 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	// into memory in growPmemRegion().
 	pmemInfo.fname = fname
 
+	// Map the header section of the file to identify if this is a first-time
+	// initialization.
+	mapAddr, isPmem, err := mapFile(fname, int(pmemHeaderSize), fileCreate,
+		_PERM_ALL, 0, nil)
+	if err != 0 {
+		return nil, error(errorString("Mapping persistent memory file failed"))
+	}
+	pmemHeader = (*pHeader)(mapAddr)
+	pmemInfo.isPmem = isPmem
+
+	if pmemHeader.magic != hdrMagic {
+		// First time initialization
+		// Store the mapped size in the header section
+		pmemHeader.mappedSize = int(pmemHeaderSize)
+		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize),
+			unsafe.Sizeof(pmemHeaderSize))
+
+		// Store the magic constant in the header section
+		pmemHeader.magic = hdrMagic
+		PersistRange(unsafe.Pointer(&pmemHeader.magic),
+			unsafe.Sizeof(hdrMagic))
+		println("First time initialization")
+	} else {
+		// Not a first time initialization
+		println("Not a first time intialization")
+	}
+
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
 
@@ -112,7 +154,7 @@ func clearHeapBits(addr uintptr, size uintptr) {
 	// todo
 }
 
-// Function to check that 'addr' is an address in the persistent memory range
+// InPmem checks whether 'addr' is an address in the persistent memory range
 func InPmem(addr uintptr) bool {
 	// todo
 	return false

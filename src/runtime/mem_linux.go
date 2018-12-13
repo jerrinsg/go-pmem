@@ -167,12 +167,8 @@ func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	var err int
 
 	if memtype == isPersistent {
-		if pmemInfo.initState == initDone {
-			// We support mapping a file in persistent memory only once. If persistent
-			// memory is already initialized, we have then run out of persistent memory.
-			throw("sysMap(): Out of memory")
-		}
-		p, pmemInfo.isPmem, err = mapFile(pmemInfo.fname, int(n), fileCreate, _PERM_ALL, 0, v)
+		p, pmemInfo.isPmem, err = mapFile(pmemInfo.fname, int(n), fileCreate,
+			_PERM_ALL, pmemInfo.nextMapOffset, v)
 	} else {
 		mapFlags := int32(_MAP_ANON | _MAP_FIXED | _MAP_PRIVATE)
 		p, err = mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, -1, 0)
