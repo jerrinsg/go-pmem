@@ -973,7 +973,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			// request. Instead, when a new span is allocated to satisfy the
 			// noscan allocation request, we clear the heap type bits for the
 			// whole span.
-			sz := span.npages << pageSize // compute total span size
+			sz := span.npages << pageShift // compute total span size
 			clearHeapBits(span.base(), sz)
 		}
 	}

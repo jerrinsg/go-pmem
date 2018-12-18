@@ -153,14 +153,6 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	return nil, nil
 }
 
-func logHeapBits(addr uintptr, startByte, endByte *byte) {
-	// todo
-}
-
-func clearHeapBits(addr uintptr, size uintptr) {
-	// todo
-}
-
 // InPmem checks whether 'addr' is an address in the persistent memory range
 func InPmem(addr uintptr) bool {
 	// todo
