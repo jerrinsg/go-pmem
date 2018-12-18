@@ -8,6 +8,9 @@ import (
 const (
 	// The size of the global header section in persistent memory file
 	pmemHeaderSize = unsafe.Sizeof(pHeader{})
+
+	// The size of the per-arena metadata excluding the span and type bitmap
+	pArenaHeaderSize = unsafe.Sizeof(pArena{})
 )
 
 // These constants indicate the possible swizzle state.
@@ -58,13 +61,17 @@ type pArena struct {
 	magic int
 
 	// Size of the persistent memory arena
-	size int
+	size uintptr
 
 	// Address at which the region corresponding to this arena is mapped
 	mapAddr uintptr
 
 	// The delta value to be used for pointer swizzling
 	delta int
+
+	// Offset indicates if any space in the beginning of the arena is reserved,
+	// and cannot be used to store the metadata or used by the allocator.
+	offset uintptr
 
 	// The number of bytes of data in this arena that have already been swizzled
 	numBytesSwizzled int

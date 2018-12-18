@@ -17,9 +17,9 @@ const (
 )
 
 // Computes the size of the persistent memory metadata section necessary
-// for an arena of size 'size'. The metadata occupies 80 bytes to store the
-// arena header and a variable number of bytes to store the heap type bitmap and
-// the span bitmap. See pArena struct.
+// for an arena of size 'size'. The metadata occupies pArenaHeaderSize bytes to
+// store the arena header and a variable number of bytes to store the heap type
+// bitmap and the span bitmap. See pArena struct.
 func metadataSize(size uintptr) uintptr {
 	if size%pageSize != 0 {
 		throw("size has to a multiple of page size")
@@ -30,16 +30,16 @@ func metadataSize(size uintptr) uintptr {
 	// Size required for the span bitmap
 	spanBitmapSize := (size / pageSize) * spanBytesPerPage
 
-	return uintptr(80 + heapBitmapSize + spanBitmapSize)
+	return uintptr(pArenaHeaderSize + heapBitmapSize + spanBitmapSize)
 }
 
-// Given a persistent memory arena of 'size' bytes, this function computes
+// Given a persistent memory arena of total 'size' bytes, this function computes
 // how the arena should be divided into two regions - the metadata region (X bytes)
 // and the actual allocator usable region (Y bytes). The allocator usable region
 // has to be page aligned.
 // size = X + Y
-// 'offset' indicates if any space in the beginning of the arena has to be reserved
-// and hence unavailable to be used as metadata or data region.
+// Arena 'offset' indicates if any space in the beginning of the arena has to be
+// reserved and hence unavailable to be used as metadata or data region.
 // The following methodology is used for this computation.
 // S' = size-offset
 // The maximal possible allocator space is computed as:
@@ -48,17 +48,16 @@ func metadataSize(size uintptr) uintptr {
 // of page size to find the required sizes.
 //
 // TODO: this calculations in this function needs to be further improved
-func arenaLayout(size, offset uintptr) (uintptr, uintptr) {
+func (p *pArena) pArenaLayout() (uintptr, uintptr) {
+	// ps := pageSize / spanBytesPerPage
 	// Y + metadataSize(Y) = S'
-	// Y + (80 + y/32 + y/2048) + y = S'
-	// Y = ((2048 * S') - (80*2048)) / (64 + 1 + 2048)
-
-	availSize := size - offset
-	Y := (2048*availSize - 80*2048) / (64 + 1 + 2048)
-
-	rem := size - Y
-	remRound := round(rem+offset, pageSize)
-
-	usable := size - remRound
+	// Y + (pArenaHeaderSize + Y/bytesPerBitmapByte + Y/ps) = S'
+	// Y = (ps * (S' - pArenaHeaderSize)) / ((ps/bytesPerBitmapByte) + 1 + ps)
+	ps := uintptr(pageSize / spanBytesPerPage)
+	availSize := p.size - p.offset
+	Y := (ps * (availSize - pArenaHeaderSize)) / ((ps / bytesPerBitmapByte) + 1 + ps)
+	rem := p.size - Y
+	remRound := round(rem, pageSize)
+	usable := p.size - remRound
 	return remRound, usable
 }

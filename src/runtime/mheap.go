@@ -922,6 +922,7 @@ HaveSpan:
 		t := (*mspan)(h.spanalloc.alloc())
 		t.init(s.base()+npage<<_PageShift, s.npages-npage)
 		t.memtype = memtype
+		t.pArena = s.pArena
 		s.npages = npage
 		h.setSpan(t.base()-1, s)
 		h.setSpan(t.base(), t)
@@ -997,16 +998,18 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 			offset = pmemHeaderSize
 		}
 
-		mdSize, allocSize = arenaLayout(size, offset)
 		arenaPtr = (*pArena)(unsafe.Pointer(uintptr(v) + offset))
-		arenaPtr.size = int(size - offset)
-		arenaPtr.mapAddr = uintptr(v) + offset
+		arenaPtr.size = size
+		arenaPtr.mapAddr = uintptr(v)
+		arenaPtr.offset = offset
 		arenaPtr.magic = hdrMagic // todo - replace this with sth like a checksum
 		PersistRange(unsafe.Pointer(arenaPtr), unsafe.Sizeof(*arenaPtr))
 
 		// Increment the mapped size in persistent memory header
 		pmemHeader.mappedSize += int(size - offset)
 		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), unsafe.Sizeof(size))
+
+		mdSize, allocSize = arenaPtr.pArenaLayout()
 
 		// Increment the next map offset
 		pmemInfo.nextMapOffset += int(size)
