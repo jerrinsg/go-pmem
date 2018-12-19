@@ -48,7 +48,7 @@ func metadataSize(size uintptr) uintptr {
 // of page size to find the required sizes.
 //
 // TODO: this calculations in this function needs to be further improved
-func (p *pArena) pArenaLayout() (uintptr, uintptr) {
+func (p *pArena) layout() (uintptr, uintptr) {
 	// ps := pageSize / spanBytesPerPage
 	// Y + metadataSize(Y) = S'
 	// Y + (pArenaHeaderSize + Y/bytesPerBitmapByte + Y/ps) = S'

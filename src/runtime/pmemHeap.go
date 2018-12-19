@@ -158,13 +158,3 @@ func InPmem(addr uintptr) bool {
 	// todo
 	return false
 }
-
-// Function to log a span allocation.
-func logSpanAlloc(s *mspan) {
-	// todo
-}
-
-// Function to log that a span has been completely freed.
-func logSpanFree(s *mspan) {
-	// todo
-}

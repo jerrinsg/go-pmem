@@ -1009,7 +1009,7 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		pmemHeader.mappedSize += int(size - offset)
 		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), unsafe.Sizeof(size))
 
-		mdSize, allocSize = arenaPtr.pArenaLayout()
+		mdSize, allocSize = arenaPtr.layout()
 
 		// Increment the next map offset
 		pmemInfo.nextMapOffset += int(size)
