@@ -57,7 +57,7 @@ var (
 // The structure of the persistent memory file header region
 type pHeader struct {
 	magic        int
-	mappedSize   int
+	mappedSize   uintptr
 	rootPointer  uintptr
 	swizzleState int
 }
@@ -141,7 +141,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	if pmemHeader.magic != hdrMagic {
 		// First time initialization
 		// Store the mapped size in the header section
-		pmemHeader.mappedSize = int(pmemHeaderSize)
+		pmemHeader.mappedSize = pmemHeaderSize
 		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize),
 			unsafe.Sizeof(pmemHeaderSize))
 
@@ -151,8 +151,12 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 			unsafe.Sizeof(hdrMagic))
 		println("First time initialization")
 	} else {
-		// Not a first time initialization
 		println("Not a first time intialization")
+		err := verifyMetadata()
+		if err != nil {
+			return nil, err
+		}
+
 	}
 
 	// Set persistent memory as initialized

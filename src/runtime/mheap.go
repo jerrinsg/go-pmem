@@ -1006,7 +1006,7 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		PersistRange(unsafe.Pointer(arenaPtr), unsafe.Sizeof(*arenaPtr))
 
 		// Increment the mapped size in persistent memory header
-		pmemHeader.mappedSize += int(size - offset)
+		pmemHeader.mappedSize += (size - offset)
 		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), unsafe.Sizeof(size))
 
 		mdSize, allocSize = arenaPtr.layout()

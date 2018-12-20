@@ -98,7 +98,7 @@ func getFileSizeFd(fd int32) int {
 }
 
 // A helper function to get file size
-func utilFileSize(fd int) int {
+func utilFileSize(fd int32) int {
 	var st stat_t
 	if ret := fstat(uintptr(fd), uintptr(unsafe.Pointer(&st))); ret < 0 {
 		return int(ret)
@@ -151,7 +151,7 @@ func utilIsFdDevDax(fd int32) bool {
 }
 
 // A helper function to get the size of a device dax
-func utilDevDaxSize(fd int) int {
+func utilDevDaxSize(fd int32) int {
 	var st stat_t
 	if fstat(uintptr(fd), uintptr(unsafe.Pointer(&st))) < 0 {
 		println("utilDevDaxSize: Error fstat of file")
