@@ -49,7 +49,27 @@ func mapFile(path string, len, flags, mode, off int,
 	}
 
 	devDax := isFileDevDax(path)
-	if !devDax {
+	if devDax {
+		if flags & ^fileDaxValidFlags != 0 {
+			println("Flag unsupported for Device DAX")
+			return
+		}
+		if off != 0 {
+			println("Offset not supported for Device DAX")
+			return
+		}
+		devSize := getFileSize(path)
+		if devSize < 0 {
+			println("Unable to get device DAX size")
+		}
+		if len != 0 && len != devSize {
+			println("Device DAX length must be either 0 or the exact size of the device")
+			return
+		}
+		len = devSize
+		// ignore all of the flags for devdax
+		flags = 0
+	} else {
 		if flags&fileCreate != 0 {
 			if len < 0 {
 				println("Invalid file length")
@@ -83,49 +103,25 @@ func mapFile(path string, len, flags, mode, off int,
 		println("File open failed")
 		return
 	}
-
-	if devDax {
-		if flags & ^fileDaxValidFlags != 0 {
-			println("Flag unsupported for Device DAX")
-			return
-		}
-		if off != 0 {
-			println("Offset not supported for Device DAX")
-			return
-		}
-
-		devSize := utilDevDaxSize(int(fd))
-		if devSize < 0 {
-			println("Unable to read Device DAX size")
-			return
-		}
-		if len != 0 && len != devSize {
-			println("Device DAX length must be either 0 or the exact size of the device")
-			return
-		}
-		len = devSize
-		// ignore all of the flags for devdax
-		flags = 0
+	fsize := getFileSizeFd(fd)
+	if fsize < 0 {
+		println("Unable to read file size")
+		closefd(fd)
+		return
 	}
 
-	addr, isPmem, err = mapFd(fd, flags, len, off, devDax, mapAddr)
+	addr, isPmem, err = mapHelper(fd, flags, len, off, mapAddr, fsize)
 	if err != 0 && delFileOnErr {
 		unlinkFile(path)
 	}
+
 	closefd(fd)
 	return
 }
 
-func mapFd(fd int32, flags, len, off int, devdax bool,
-	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
-	actualLen := getFileSize(int(fd), devdax)
-	if actualLen < 0 {
-		println("mapFd: Get file size failed")
-		err = actualLen
-		return
-	}
-
-	if actualLen < (off + len) {
+func mapHelper(fd int32, flags, len, off int,
+	mapAddr unsafe.Pointer, fsize int) (addr unsafe.Pointer, isPmem bool, err int) {
+	if fsize < (off + len) {
 		// Need to extend the file to map the file
 		// set the length of the file to 'off+len'
 		if err = int(ftruncate(uintptr(fd), uintptr(len+off))); err != 0 {

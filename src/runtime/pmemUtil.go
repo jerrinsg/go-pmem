@@ -77,7 +77,20 @@ func utilMap(mapAddr unsafe.Pointer, fd int32, len, flags, off int,
 	return p, false, err
 }
 
-func getFileSize(fd int, devDax bool) int {
+func getFileSize(fname string) int {
+	openFlags := _O_RDONLY
+	pathArray := []byte(fname)
+	fd := open(&pathArray[0], int32(openFlags), 0)
+	if fd < 0 {
+		return -1
+	}
+	fsize := getFileSizeFd(fd)
+	closefd(fd)
+	return fsize
+}
+
+func getFileSizeFd(fd int32) int {
+	devDax := utilIsFdDevDax(fd)
 	if devDax {
 		return utilDevDaxSize(fd)
 	}
