@@ -126,7 +126,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	// Map the header section of the file to identify if this is a first-time
 	// initialization.
 	mapAddr, isPmem, err := mapFile(fname, int(pmemHeaderSize), fileCreate,
-		_PERM_ALL, 0, nil)
+		_DEFAULT_FMODE, 0, nil)
 	if err != 0 {
 		return nil, error(errorString("Mapping persistent memory file failed"))
 	}

@@ -11,11 +11,14 @@ import (
 )
 
 const (
-	_EACCES   = 13
-	_EINVAL   = 22
-	_O_RDWR   = 0x2
-	_O_CREAT  = 0x40
-	_PERM_ALL = 0666 // read, write access to all users
+	_EACCES  = 13
+	_EINVAL  = 22
+	_O_RDWR  = 0x2
+	_O_CREAT = 0x40
+
+	// The effective permission of the created file is (mode & ~umask) where
+	// umask is the system wide umask.
+	_DEFAULT_FMODE = 0666
 )
 
 // Don't split the stack as this method may be invoked without a valid G, which
@@ -168,7 +171,7 @@ func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 
 	if memtype == isPersistent {
 		p, pmemInfo.isPmem, err = mapFile(pmemInfo.fname, int(n), fileCreate,
-			_PERM_ALL, pmemInfo.nextMapOffset, v)
+			_DEFAULT_FMODE, pmemInfo.nextMapOffset, v)
 	} else {
 		mapFlags := int32(_MAP_ANON | _MAP_FIXED | _MAP_PRIVATE)
 		p, err = mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, -1, 0)
