@@ -34,7 +34,7 @@ const (
 	// A magic constant that will be written to the first 8 bytes of the
 	// persistent memory region. This constant will then help to differentiate
 	// between a first run and subsequent runs.
-	hdrMagic = 0xABCDCBA
+	hdrMagic = 0x7376213E
 
 	// maxMemTypes represents the memory types supported - persistent memory
 	// and volatile memory.

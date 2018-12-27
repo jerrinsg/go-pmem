@@ -20,7 +20,13 @@ func Fence() {
 	throw("Not implemented")
 }
 
-func PmapFile(path string, len, flags, mode int, mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
+func mapFile(path string, len, flags, mode, off int,
+	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
+	throw("Not implemented")
+	return
+}
+
+func getFileSize(fname string) (size int) {
 	throw("Not implemented")
 	return
 }
