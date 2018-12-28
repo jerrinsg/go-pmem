@@ -101,6 +101,16 @@ var pmemInfo struct {
 	// nextMapOffset stores the offset in the persistent memory file at which
 	// it should be mapped into memory next.
 	nextMapOffset int
+
+	// The application root pointer. Root pointer is the pointer through which
+	// the application accesses all data in the persistent memory region. This
+	// variable is used only during reconstruction. It ensures that there is at
+	// least one variable pointing to the application root before invoking
+	// garbage collection.
+	root unsafe.Pointer
+
+	// A lock to protect modifications to the root pointer
+	rootLock mutex
 }
 
 // PmemInit is the persistent memory initialization function.
@@ -369,4 +379,59 @@ func InPmem(addr uintptr) bool {
 		return false
 	}
 	return s.memtype == isPersistent
+}
+
+// GetRoot returns the root pointer that is stored in the persistent memory
+// header region. Swizzling is not yet supported, so the address returned is
+// the same as that was stored using SetRoot().
+func GetRoot() unsafe.Pointer {
+	addr := pmemHeader.rootPointer
+	if !InPmem(addr) {
+		// The address does not point to a persistent memory address. This may
+		// have happened due to some data corruption. Return a nil pointer so
+		// that application does not access an unsafe address.
+		return nil
+	}
+	return unsafe.Pointer(addr)
+}
+
+// SetRoot stores the application root pointer in the persistent memory header
+// region.
+func SetRoot(addr unsafe.Pointer) (err error) {
+	if !InPmem(uintptr(addr)) {
+		return error(errorString("Address not in persistent memory"))
+	}
+	lock(&pmemInfo.rootLock)
+	pmemInfo.root = addr
+	pmemHeader.rootPointer = uintptr(addr)
+	dstAddr := (unsafe.Pointer)(&pmemHeader.rootPointer)
+	PersistRange(dstAddr, unsafe.Sizeof(addr))
+	unlock(&pmemInfo.rootLock)
+	return
+}
+
+// EnableGC runs a full GC cycle as a stop-the-world event. This is written as a
+// separate function to PmemInit() so that the application can do any pointer
+// manipulation (such as swizzling) before a full GC cycle is run.
+// The argumnet gcp specifies garbage collection percentage and controls how
+// often GC is run (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
+// Default value of gcp is 100.
+// Users are required to initialize persistent memory as follows:
+// (1) Call PmemInit to initialize persistent memory
+// (2) Call EnableGC()
+// This function would be removed when runtime supports pointer swizzling.
+func EnableGC(gcp int) (err error) {
+	if pmemInfo.initState != initDone {
+		return error(errorString("Persistent memory uninitialized"))
+	}
+	setGCPercent(int32(gcp)) // restore GC percentage
+	// Run GC so that unused memory in reconstructed spans are reclaimed
+	stw := debug.gcstoptheworld
+	// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a
+	// stop-the-world event
+	debug.gcstoptheworld = int32(gcForceBlockMode)
+	GC()
+	// restore gcstoptheworld
+	debug.gcstoptheworld = stw
+	return
 }
