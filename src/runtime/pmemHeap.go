@@ -364,6 +364,9 @@ func freeSpan(npages, base uintptr, needzero uint8) {
 
 // InPmem checks whether 'addr' is an address in the persistent memory range
 func InPmem(addr uintptr) bool {
-	// todo
-	return false
+	s := spanOfHeap(addr)
+	if s == nil {
+		return false
+	}
+	return s.memtype == isPersistent
 }
