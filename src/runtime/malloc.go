@@ -641,6 +641,12 @@ func (h *mheap) sysAlloc(n uintptr, memtype int) (v unsafe.Pointer, size uintptr
 
 mapped:
 	// Create arena metadata.
+	h.createArenaMetadata(v, size)
+
+	return
+}
+
+func (h *mheap) createArenaMetadata(v unsafe.Pointer, size uintptr) {
 	for ri := arenaIndex(uintptr(v)); ri <= arenaIndex(uintptr(v)+size-1); ri++ {
 		l2 := h.arenas[ri.l1()]
 		if l2 == nil {
@@ -675,8 +681,6 @@ mapped:
 	if raceenabled {
 		racemapshadow(v, size)
 	}
-
-	return
 }
 
 // sysReserveAligned is like sysReserve, but the returned pointer is
