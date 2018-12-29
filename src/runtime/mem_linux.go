@@ -171,7 +171,7 @@ func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 
 	if memtype == isPersistent {
 		p, pmemInfo.isPmem, err = mapFile(pmemInfo.fname, int(n), fileCreate,
-			_DEFAULT_FMODE, pmemInfo.nextMapOffset, v)
+			_DEFAULT_FMODE, int(pmemInfo.nextMapOffset), v)
 	} else {
 		mapFlags := int32(_MAP_ANON | _MAP_FIXED | _MAP_PRIVATE)
 		p, err = mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, -1, 0)

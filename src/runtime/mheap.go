@@ -1012,7 +1012,7 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		mdSize, allocSize = arenaPtr.layout()
 
 		// Increment the next map offset
-		pmemInfo.nextMapOffset += int(size)
+		pmemInfo.nextMapOffset += size
 	}
 
 	// Create a fake "in use" span and free it, so that the

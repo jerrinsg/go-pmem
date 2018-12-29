@@ -100,7 +100,7 @@ var pmemInfo struct {
 
 	// nextMapOffset stores the offset in the persistent memory file at which
 	// it should be mapped into memory next.
-	nextMapOffset int
+	nextMapOffset uintptr
 
 	// The application root pointer. Root pointer is the pointer through which
 	// the application accesses all data in the persistent memory region. This
@@ -159,6 +159,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 		println("Not a first time intialization")
 		err := verifyMetadata()
 		if err != nil {
+			unmapHeader()
 			return nil, err
 		}
 
@@ -168,6 +169,51 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	atomic.Store(&pmemInfo.initState, initDone)
 
 	return nil, nil
+}
+
+// A helper function that unmaps the header section of the persistent memory
+// file in case any errors happen during the reconstruction process.
+func unmapHeader() {
+	munmap(unsafe.Pointer(pmemHeader), pmemHeaderSize)
+}
+
+// This function goes through the span bitmap found in the arena header, and
+// recreates spans one by one. For each recreated span, it copies the heap type
+// bits from the persistent memory arena header to the runtime arena datastructure.
+func (ar *pArena) reconstruct() {
+	h := &mheap_
+	mdata, allocSize := ar.layout()
+	allocPages := allocSize >> pageShift
+	spanBase := ar.mapAddr + mdata
+
+	// Create a span for this arena and free it so that it will be added to
+	// the mheap free list.
+	lock(&h.lock)
+	s := (*mspan)(h.spanalloc.alloc())
+	s.init(spanBase, allocPages)
+	s.memtype = isPersistent
+	s.pArena = (uintptr)(unsafe.Pointer(ar))
+	s.needzero = 1
+	h.setSpan(s.base(), s)
+	h.setSpan(s.base()+s.npages*pageSize-1, s)
+	s.state = mSpanManual
+	h.freeSpanLocked(s, false, true, 0)
+	unlock(&h.lock)
+
+	// Compute the address of the span bitmap within the arena header.
+	typeEntries := allocSize / bytesPerBitmapByte
+	typeBitsAddr := ar.mapAddr + ar.offset + pArenaHeaderSize
+	spanBitsAddr := unsafe.Pointer(typeBitsAddr + typeEntries)
+	spanBitmap := (*(*[1 << 28]uint32)(spanBitsAddr))[:allocPages]
+
+	// Iterate over the span bitmap log and recreate spans one by one
+	for i, sVal := range spanBitmap {
+		if sVal != 0 {
+			baseAddr := spanBase + uintptr(i<<pageShift)
+			s := createSpan(sVal, baseAddr)
+			restoreSpanHeapBits(s)
+		}
+	}
 }
 
 // createSpan figures out the properties of the span to be reconstructed such as
@@ -213,12 +259,12 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	// Trim the leading and trailing pages of the span.
 	leadpages := (base - s.base()) >> pageShift
 	if leadpages > 0 {
-		freeSpan(leadpages, s.base(), s.needzero)
+		freeSpan(leadpages, s.base(), s.needzero, s.pArena)
 	}
 
 	trailpages := s.npages - leadpages - uintptr(npages)
 	if trailpages > 0 {
-		freeSpan(trailpages, base+uintptr(npages*pageSize), s.needzero)
+		freeSpan(trailpages, base+uintptr(npages*pageSize), s.needzero, s.pArena)
 	}
 
 	// Initialize s with the correct base address and number of pages
@@ -359,11 +405,12 @@ func (h *mheap) searchSpanLocked(baseAddr uintptr, npages int) *mspan {
 // memory allocator free list/treap. 'npages' is the number of pages in the trimmed
 // region, and 'base' is its start address.
 // mheap must be locked before calling this function
-func freeSpan(npages, base uintptr, needzero uint8) {
+func freeSpan(npages, base uintptr, needzero uint8, parena uintptr) {
 	h := &mheap_
 	t := (*mspan)(h.spanalloc.alloc())
 	t.init(base, npages)
 	t.memtype = isPersistent
+	t.pArena = parena
 
 	h.setSpan(t.base(), t)
 	h.setSpan(t.base()+t.npages*pageSize-1, t)
@@ -449,12 +496,11 @@ func restoreSpanHeapBits(s *mspan) {
 	// total heap type bytes to be copied
 	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
 
-	bytesCopied := uintptr(0)
 	parena := (*pArena)(unsafe.Pointer(s.pArena))
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
 
-	for bytesCopied < totalBytes {
+	for copied := uintptr(0); copied < totalBytes; {
 		// each iteration copies heap type bits corresponding to the heap region
 		// between 'spanAddr' and 'endAddr'
 		ai := arenaIndex(spanAddr)
@@ -472,7 +518,7 @@ func restoreSpanHeapBits(s *mspan) {
 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
 		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
 
-		bytesCopied += (numSpanBytes / bytesPerBitmapByte)
+		copied += (numSpanBytes / bytesPerBitmapByte)
 		spanAddr += numSpanBytes
 	}
 }
