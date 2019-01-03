@@ -163,12 +163,101 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 			return nil, err
 		}
 
+		// Disable garbage collection during persistent memory initialization
+		setGCPercent(-1)
+
+		// Map all arenas found in the persistent memory file to memory. This
+		// function also creates spans for the in-use regions of memory in the
+		// file, and restores the heap type bits for the 'recreated' spans.
+		err = mapArenas()
+		if err != nil {
+			unmapHeader()
+			return nil, err
+		}
+
+		// Before invoking garbage collection, the runtime should ensure that
+		// there is at least one variable pointing to the application root data.
+		// Hence, save a copy of the root pointer in pmemInfo.root.
+		pmemInfo.root = GetRoot()
 	}
 
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
 
-	return nil, nil
+	return pmemInfo.root, nil
+}
+
+func mapArenas() (err error) {
+	// A slice containing addresses of all mapped arenas, in case we need to
+	// unmap them
+	var arenas []*pArena
+
+	if pmemHeader.mappedSize == pmemHeaderSize {
+		// The persistent memory file contains only the header section and does
+		// not contain any arenas.
+		return
+	}
+
+	var mapped uintptr
+	for mapped < pmemHeader.mappedSize {
+		// Map the header section of the arena to get the size of the arena and
+		// the map address. Then unmap the mapped region, and map the entire
+		// arena at the map address.
+		var offset uintptr
+		if mapped == 0 {
+			offset = pmemHeaderSize
+		}
+		mapAddr, _, err := mapFile(pmemInfo.fname, int(pArenaHeaderSize+offset),
+			fileCreate, _DEFAULT_FMODE, int(mapped), nil)
+		if err != 0 {
+			unmapArenas(arenas)
+			return error(errorString("Arena mapping failed"))
+		}
+
+		// Point at the arena header
+		parena := (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
+		arenaMapAddr := unsafe.Pointer(parena.mapAddr)
+		arenaSize := parena.size
+		munmap(mapAddr, pArenaHeaderSize+offset)
+
+		// Try mapping the arena at the exact address it was mapped previously
+		_, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
+			_DEFAULT_FMODE, int(mapped), arenaMapAddr)
+		if err != 0 {
+			// We do not support swizzling yet, so just return an error
+			unmapArenas(arenas)
+			return error(errorString("Arena mapping failed"))
+		}
+
+		// Create the volatile memory arena datastructures for the newly mapped
+		// heap regions. Each volatile arena datastructure contains the runtime
+		// heap type bitmap and span table for the region it manages.
+		mheap_.createArenaMetadata(arenaMapAddr, arenaSize)
+
+		mapped += arenaSize
+
+		// Point the arena header at the beginning of the mapped region
+		parena = (*pArena)(unsafe.Pointer(uintptr(arenaMapAddr) + offset))
+		arenas = append(arenas, parena)
+	}
+
+	// Update the next offset at which the persistent memory file should be mapped
+	pmemInfo.nextMapOffset = mapped
+
+	for _, ar := range arenas {
+		ar.reconstruct()
+	}
+
+	return
+}
+
+// A helper function that iterates the arena slice and unmaps all of them
+func unmapArenas(arenas []*pArena) {
+	for _, ar := range arenas {
+		mapAddr := unsafe.Pointer(ar.mapAddr)
+		mapSize := ar.size
+		munmap(mapAddr, mapSize)
+	}
 }
 
 // A helper function that unmaps the header section of the persistent memory
@@ -370,7 +459,7 @@ func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
 	}
 
 	// Recursively search the left subtree
-	if root.left != nil && root.left.npagesKey >= npages {
+	if root.left != nil && npages <= key.npages {
 		if sl := treapSearch(root.left, baseAddr, npages); sl != nil {
 			return sl
 		}
