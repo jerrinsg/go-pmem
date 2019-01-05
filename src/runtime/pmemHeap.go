@@ -31,6 +31,9 @@ const (
 	isNotPersistent = 0
 	isPersistent    = 1
 
+	// Size of a int/uintptr variable
+	intSize = unsafe.Sizeof(0)
+
 	// maxMemTypes represents the memory types supported - persistent memory
 	// and volatile memory.
 	maxMemTypes = 2
@@ -57,7 +60,10 @@ type pHeader struct {
 	swizzleState int
 }
 
-// Strucutre of a persistent memory arena
+// Strucutre of a persistent memory arena header
+// Persistent memory arena header pointers used in the runtime point to the
+// actual data in the beginning of the persistent memory arena, and not to a
+// volatile copy.
 type pArena struct {
 	// To identify this is a go-pmem recognized arena. This can either be a
 	// magic constant or something like a checksum.
@@ -77,11 +83,14 @@ type pArena struct {
 	offset uintptr
 
 	// The number of bytes of data in this arena that have already been swizzled
-	numBytesSwizzled int
+	bytesSwizzled int
 
 	// The following data members are for supporting a minimal per-arena undo log
 	numLogEntries int         // Number of valid entries in the log section
 	logs          [2]logEntry // The actual log data
+
+	// This is followed by the heap type bits log and the span bitmap log which
+	// occupies a variable number of bytes depending on the size of the arena.
 }
 
 // A volatile data-structure which stores all the necessary information about
@@ -147,13 +156,11 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 		// First time initialization
 		// Store the mapped size in the header section
 		pmemHeader.mappedSize = pmemHeaderSize
-		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize),
-			unsafe.Sizeof(pmemHeaderSize))
+		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), intSize)
 
 		// Store the magic constant in the header section
 		pmemHeader.magic = hdrMagic
-		PersistRange(unsafe.Pointer(&pmemHeader.magic),
-			unsafe.Sizeof(hdrMagic))
+		PersistRange(unsafe.Pointer(&pmemHeader.magic), intSize)
 		println("First time initialization")
 	} else {
 		println("Not a first time intialization")
@@ -541,7 +548,7 @@ func SetRoot(addr unsafe.Pointer) (err error) {
 	pmemInfo.root = addr
 	pmemHeader.rootPointer = uintptr(addr)
 	dstAddr := (unsafe.Pointer)(&pmemHeader.rootPointer)
-	PersistRange(dstAddr, unsafe.Sizeof(addr))
+	PersistRange(dstAddr, intSize)
 	unlock(&pmemInfo.rootLock)
 	return
 }

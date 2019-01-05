@@ -7,9 +7,18 @@ import (
 
 // logEntry is the structure used to store one log entry.
 type logEntry struct {
-	ptr uintptr
-	val uintptr
+	// Offset of the address to be logged from the arena map address
+	off uintptr
+	// The value to be logged
+	val int
 }
+
+const (
+	// The maximum number of entries that can be logged in the arena header
+	maxLogEntries = 2
+
+	logEntrySize = unsafe.Sizeof(logEntry{})
+)
 
 // logHeapBits is used to log the heap type bits set by the memory allocator during
 // a persistent memory allocation request.
@@ -150,4 +159,66 @@ func spanLogAddr(s *mspan) *uint32 {
 
 	logAddr := spanBitmap + (pageOffset * spanBytesPerPage)
 	return (*uint32)(unsafe.Pointer(logAddr))
+}
+
+// The following functions help implement a minimal undo logging in the runtime
+// using persistent memory arena header undo buffers.
+// Each arena support storing two data items. Both data items are stored as a
+// signed int value. The only unsigned value logged here is the arena map address
+// (mapAddr). But since Go uses only 48 bits for heap address (see comment about
+// heapAddrBits in malloc.go), it is safe to store and retrieve mapAddr as a
+// signed value.
+
+// Function to log a value in the arena header. Each arena supports logging up
+// to 'maxLogEntries' number of entries.
+func (pa *pArena) logEntry(addr unsafe.Pointer) {
+	// Store the offset from the beginning of the arena instead of the
+	// actual address
+	off := uintptr(addr) - uintptr(unsafe.Pointer(pa)) + pa.offset
+	if off >= pa.size {
+		throw("Invalid arena logging request")
+	}
+
+	ind := pa.numLogEntries
+	if ind == maxLogEntries {
+		throw("No more space in the arena to log values")
+	}
+
+	val := *(*int)(addr)
+	pa.logs[ind].off = off
+	pa.logs[ind].val = val
+	PersistRange(unsafe.Pointer(&pa.logs[ind]), logEntrySize)
+
+	pa.numLogEntries = ind + 1
+	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
+}
+
+// Copies the logged data back back to persistent memory
+func (pa *pArena) revertLog() {
+	if pa.numLogEntries == 0 {
+		// No log entries to revert
+		return
+	}
+
+	for i := 0; i < pa.numLogEntries; i++ {
+		addr := unsafe.Pointer(pa.logs[i].off + uintptr(unsafe.Pointer(pa)) -
+			pa.offset)
+		ai := (*int)(addr)
+		*ai = pa.logs[i].val
+		PersistRange(addr, intSize)
+	}
+
+	pa.numLogEntries = 0
+	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
+}
+
+// Discards the log entries by setting numLogEntries as 0. It also flushes the
+// persistent memory addresses into which data were written.
+func (pa *pArena) commitLog() {
+	for i := 0; i < pa.numLogEntries; i++ {
+		addr := pa.logs[i].off + uintptr(unsafe.Pointer(pa)) - pa.offset
+		PersistRange(unsafe.Pointer(addr), intSize)
+	}
+	pa.numLogEntries = 0
+	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
 }
