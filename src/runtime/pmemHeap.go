@@ -54,9 +54,23 @@ var (
 
 // The structure of the persistent memory file header region
 type pHeader struct {
-	magic        int
-	mappedSize   uintptr
-	rootPointer  uintptr
+	// A magic constant that is used to distinguish between the first time and
+	// subsequent initialization of the persistent memory file.
+	magic int
+
+	// The size of the file that is currently mapped into memory. This is used
+	// during reinitialization to identify if the file was externally truncated
+	// and to correctly map the file into memory.
+	mappedSize uintptr
+
+	// The offset from the beginning of the file of the application root pointer.
+	// An offset is stored instead of the actual root pointer because, during
+	// reinitialization, the arena map address can change causing the pointer
+	// value to be invalid.
+	rootOffset uintptr
+
+	// If pointers are currently being swizzled, swizzleState captures the current
+	// swizzling state.
 	swizzleState int
 }
 
@@ -73,17 +87,19 @@ type pArena struct {
 	size uintptr
 
 	// Address at which the region corresponding to this arena is mapped
+	// During swizzling mapAddr cannot be reliably used as it might contain the
+	// mapping address from a previous run.
 	mapAddr uintptr
 
 	// The delta value to be used for pointer swizzling
 	delta int
 
-	// Offset indicates if any space in the beginning of the arena is reserved,
-	// and cannot be used to store the metadata or used by the allocator.
-	offset uintptr
+	// The offset of the file region from the beginning of the file at which this
+	// arena is mapped at.
+	fileOffset uintptr
 
 	// The number of bytes of data in this arena that have already been swizzled
-	bytesSwizzled int
+	bytesSwizzled uintptr
 
 	// The following data members are for supporting a minimal per-arena undo log
 	numLogEntries int         // Number of valid entries in the log section
@@ -152,7 +168,8 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	pmemHeader = (*pHeader)(mapAddr)
 	pmemInfo.isPmem = isPmem
 
-	if pmemHeader.magic != hdrMagic {
+	firstInit := pmemHeader.magic != hdrMagic
+	if firstInit {
 		// First time initialization
 		// Store the mapped size in the header section
 		pmemHeader.mappedSize = pmemHeaderSize
@@ -296,9 +313,16 @@ func (ar *pArena) reconstruct() {
 	h.freeSpanLocked(s, false, true, 0)
 	unlock(&h.lock)
 
+	// We need to add the space occupied by the common persistent memory header
+	// for the first arena.
+	var off uintptr
+	if ar.fileOffset == 0 {
+		off = pmemHeaderSize
+	}
+
 	// Compute the address of the span bitmap within the arena header.
 	typeEntries := allocSize / bytesPerBitmapByte
-	typeBitsAddr := ar.mapAddr + ar.offset + pArenaHeaderSize
+	typeBitsAddr := ar.mapAddr + off + pArenaHeaderSize
 	spanBitsAddr := unsafe.Pointer(typeBitsAddr + typeEntries)
 	spanBitmap := (*(*[1 << 28]uint32)(spanBitsAddr))[:allocPages]
 
@@ -524,31 +548,30 @@ func InPmem(addr uintptr) bool {
 	return s.memtype == isPersistent
 }
 
-// GetRoot returns the root pointer that is stored in the persistent memory
-// header region. Swizzling is not yet supported, so the address returned is
-// the same as that was stored using SetRoot().
+// GetRoot returns the application root pointer. After a restart, the swizzling
+// code will take care of setting the correct 'swizzled' pointer as root.
+// GetRoot() returns nil if it is called before persistent memory initialization
+// is completed.
 func GetRoot() unsafe.Pointer {
-	addr := pmemHeader.rootPointer
-	if !InPmem(addr) {
-		// The address does not point to a persistent memory address. This may
-		// have happened due to some data corruption. Return a nil pointer so
-		// that application does not access an unsafe address.
-		return nil
-	}
-	return unsafe.Pointer(addr)
+	return pmemInfo.root
 }
 
 // SetRoot stores the application root pointer in the persistent memory header
 // region.
 func SetRoot(addr unsafe.Pointer) (err error) {
-	if !InPmem(uintptr(addr)) {
-		return error(errorString("Address not in persistent memory"))
+	s := spanOfHeap(uintptr(addr))
+	if s == nil || s.memtype != isPersistent {
+		return error(errorString("Invalid address passed to SetRoot"))
 	}
+
+	pa := (*pArena)(unsafe.Pointer(s.pArena))
+	fo := pa.fileOffset
+	po := uintptr(addr) - s.pArena
+
 	lock(&pmemInfo.rootLock)
 	pmemInfo.root = addr
-	pmemHeader.rootPointer = uintptr(addr)
-	dstAddr := (unsafe.Pointer)(&pmemHeader.rootPointer)
-	PersistRange(dstAddr, intSize)
+	pmemHeader.rootOffset = po + fo
+	PersistRange((unsafe.Pointer)(&pmemHeader.rootOffset), intSize)
 	unlock(&pmemInfo.rootLock)
 	return
 }

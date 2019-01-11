@@ -56,8 +56,12 @@ func (p *pArena) layout() (uintptr, uintptr) {
 	// Y + metadataSize(Y) = S'
 	// Y + (pArenaHeaderSize + Y/bytesPerBitmapByte + Y/ps) = S'
 	// Y = (ps * (S' - pArenaHeaderSize)) / ((ps/bytesPerBitmapByte) + 1 + ps)
+	var off uintptr
+	if p.fileOffset == 0 {
+		off = pmemHeaderSize
+	}
 	ps := uintptr(pageSize / spanBytesPerPage)
-	availSize := p.size - p.offset
+	availSize := p.size - off
 	Y := (ps * (availSize - pArenaHeaderSize)) / ((ps / bytesPerBitmapByte) + 1 + ps)
 	rem := p.size - Y
 	remRound := round(rem, pageSize)

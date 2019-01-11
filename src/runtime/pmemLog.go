@@ -70,13 +70,18 @@ func clearHeapBits(addr uintptr, size uintptr) {
 // pmemHeapBitsAddr returns the address in persistent memory where heap type
 // bitmap will be logged corresponding to virtual address 'x'
 func pmemHeapBitsAddr(x uintptr, pa *pArena) unsafe.Pointer {
-	arenaOffset := pa.offset
-	typeBitsAddr := pa.mapAddr + arenaOffset + pArenaHeaderSize
-
+	off := uintptr(0)
+	if pa.fileOffset == 0 {
+		// Account the space occupied by the common persistent memory header
+		// present in the first arena.
+		off = pmemHeaderSize
+	}
+	pu := uintptr(unsafe.Pointer(pa))
 	mdSize, _ := pa.layout()
-	arenaStart := pa.mapAddr + mdSize
-
+	arenaStart := pu - off + mdSize
 	allocOffset := (x - arenaStart) / 32
+
+	typeBitsAddr := pu + pArenaHeaderSize
 	return unsafe.Pointer(typeBitsAddr + allocOffset)
 }
 
@@ -151,8 +156,15 @@ func spanLogAddr(s *mspan) *uint32 {
 	mdSize, allocSize := pArena.layout()
 	arenaStart := pArena.mapAddr + mdSize
 
+	offset := uintptr(0)
+	if pArena.fileOffset == 0 {
+		// Account the space occupied by the common persistent memory header
+		// present in the first arena.
+		offset = pmemHeaderSize
+	}
+
 	// Add offset, arena header, and heap typebitmap size to get the address of span bitmap
-	spanBitmap := pArena.mapAddr + pArena.offset + pArenaHeaderSize + allocSize/bytesPerBitmapByte
+	spanBitmap := pArena.mapAddr + offset + pArenaHeaderSize + allocSize/bytesPerBitmapByte
 
 	// Index of the first page of this span within the persistent memory arena
 	pageOffset := (s.base() - arenaStart) >> pageShift
@@ -174,7 +186,7 @@ func spanLogAddr(s *mspan) *uint32 {
 func (pa *pArena) logEntry(addr unsafe.Pointer) {
 	// Store the offset from the beginning of the arena instead of the
 	// actual address
-	off := uintptr(addr) - uintptr(unsafe.Pointer(pa)) + pa.offset
+	off := uintptr(addr) - uintptr(unsafe.Pointer(pa))
 	if off >= pa.size {
 		throw("Invalid arena logging request")
 	}
@@ -201,8 +213,7 @@ func (pa *pArena) revertLog() {
 	}
 
 	for i := 0; i < pa.numLogEntries; i++ {
-		addr := unsafe.Pointer(pa.logs[i].off + uintptr(unsafe.Pointer(pa)) -
-			pa.offset)
+		addr := unsafe.Pointer(pa.logs[i].off + uintptr(unsafe.Pointer(pa)))
 		ai := (*int)(addr)
 		*ai = pa.logs[i].val
 		PersistRange(addr, intSize)
@@ -212,11 +223,17 @@ func (pa *pArena) revertLog() {
 	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
 }
 
+// Discards all log entries without copying any data
+func (pa *pArena) resetLog() {
+	pa.numLogEntries = 0
+	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
+}
+
 // Discards the log entries by setting numLogEntries as 0. It also flushes the
 // persistent memory addresses into which data were written.
 func (pa *pArena) commitLog() {
 	for i := 0; i < pa.numLogEntries; i++ {
-		addr := pa.logs[i].off + uintptr(unsafe.Pointer(pa)) - pa.offset
+		addr := pa.logs[i].off + uintptr(unsafe.Pointer(pa))
 		PersistRange(unsafe.Pointer(addr), intSize)
 	}
 	pa.numLogEntries = 0

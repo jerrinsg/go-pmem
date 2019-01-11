@@ -1001,7 +1001,7 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		arenaPtr = (*pArena)(unsafe.Pointer(uintptr(v) + offset))
 		arenaPtr.size = size
 		arenaPtr.mapAddr = uintptr(v)
-		arenaPtr.offset = offset
+		arenaPtr.fileOffset = pmemInfo.nextMapOffset
 		arenaPtr.magic = hdrMagic // todo - replace this with sth like a checksum
 		PersistRange(unsafe.Pointer(arenaPtr), unsafe.Sizeof(*arenaPtr))
 
