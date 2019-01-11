@@ -168,6 +168,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	pmemHeader = (*pHeader)(mapAddr)
 	pmemInfo.isPmem = isPmem
 
+	var gcp int
 	firstInit := pmemHeader.magic != hdrMagic
 	if firstInit {
 		// First time initialization
@@ -188,33 +189,44 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 		}
 
 		// Disable garbage collection during persistent memory initialization
-		setGCPercent(-1)
+		gcp = int(setGCPercent(-1))
 
 		// Map all arenas found in the persistent memory file to memory. This
-		// function also creates spans for the in-use regions of memory in the
-		// file, and restores the heap type bits for the 'recreated' spans.
+		// function creates spans for the in-use regions of memory in the
+		// arenas, restores the heap type bits for the 'recreated' spans, and
+		// swizzles all pointers in the arenas if necessary.
 		err = mapArenas()
 		if err != nil {
 			unmapHeader()
 			return nil, err
 		}
-
-		// Before invoking garbage collection, the runtime should ensure that
-		// there is at least one variable pointing to the application root data.
-		// Hence, save a copy of the root pointer in pmemInfo.root.
-		pmemInfo.root = GetRoot()
 	}
 
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
 
+	if !firstInit {
+		// Enable garbage collection
+		enableGC(gcp)
+	}
+
 	return pmemInfo.root, nil
 }
 
+// Arena information structure which will be used during reconstruction and
+// swizzling.
+type arenaInfo struct {
+	// Pointer to the arena metadata section in persistent memory
+	pa *pArena
+
+	// The address at which the arena is mapped in this run. This would be
+	// different than pa.mapAddr if the arena mapping address changed.
+	mapAddr uintptr
+}
+
 func mapArenas() (err error) {
-	// A slice containing addresses of all mapped arenas, in case we need to
-	// unmap them
-	var arenas []*pArena
+	// A slice containing information about each mapped arena
+	var arenas []*arenaInfo
 
 	if pmemHeader.mappedSize == pmemHeaderSize {
 		// The persistent memory file contains only the header section and does
@@ -245,41 +257,48 @@ func mapArenas() (err error) {
 		munmap(mapAddr, pArenaHeaderSize+offset)
 
 		// Try mapping the arena at the exact address it was mapped previously
-		_, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
+		// mapFile() will fail if the file cannot be mapped at the requested address
+		mapAddr, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
 			_DEFAULT_FMODE, int(mapped), arenaMapAddr)
 		if err != 0 {
-			// We do not support swizzling yet, so just return an error
-			unmapArenas(arenas)
-			return error(errorString("Arena mapping failed"))
+			// Try mapping the arena again, but at any address
+			mapAddr, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
+				_DEFAULT_FMODE, int(mapped), nil)
+			if err != 0 {
+				unmapArenas(arenas)
+				return error(errorString("Arena mapping failed"))
+			}
 		}
 
 		// Create the volatile memory arena datastructures for the newly mapped
 		// heap regions. Each volatile arena datastructure contains the runtime
 		// heap type bitmap and span table for the region it manages.
-		mheap_.createArenaMetadata(arenaMapAddr, arenaSize)
+		mheap_.createArenaMetadata(mapAddr, arenaSize)
 
 		mapped += arenaSize
 
-		// Point the arena header at the beginning of the mapped region
-		parena = (*pArena)(unsafe.Pointer(uintptr(arenaMapAddr) + offset))
-		arenas = append(arenas, parena)
+		// Point the arena header at the actual mapped region
+		parena = (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
+		ar := &arenaInfo{parena, uintptr(mapAddr)}
+		// Reconstruct the spans in this arena
+		ar.reconstruct()
+		arenas = append(arenas, ar)
 	}
 
 	// Update the next offset at which the persistent memory file should be mapped
 	pmemInfo.nextMapOffset = mapped
 
-	for _, ar := range arenas {
-		ar.reconstruct()
-	}
+	swizzleArenas(arenas)
 
 	return
 }
 
 // A helper function that iterates the arena slice and unmaps all of them
-func unmapArenas(arenas []*pArena) {
+func unmapArenas(arenas []*arenaInfo) {
 	for _, ar := range arenas {
-		mapAddr := unsafe.Pointer(ar.mapAddr)
-		mapSize := ar.size
+		pa := ar.pa
+		mapAddr := unsafe.Pointer(pa.mapAddr)
+		mapSize := pa.size
 		munmap(mapAddr, mapSize)
 	}
 }
@@ -293,9 +312,10 @@ func unmapHeader() {
 // This function goes through the span bitmap found in the arena header, and
 // recreates spans one by one. For each recreated span, it copies the heap type
 // bits from the persistent memory arena header to the runtime arena datastructure.
-func (ar *pArena) reconstruct() {
+func (ar *arenaInfo) reconstruct() {
 	h := &mheap_
-	mdata, allocSize := ar.layout()
+	pa := ar.pa
+	mdata, allocSize := pa.layout()
 	allocPages := allocSize >> pageShift
 	spanBase := ar.mapAddr + mdata
 
@@ -305,7 +325,7 @@ func (ar *pArena) reconstruct() {
 	s := (*mspan)(h.spanalloc.alloc())
 	s.init(spanBase, allocPages)
 	s.memtype = isPersistent
-	s.pArena = (uintptr)(unsafe.Pointer(ar))
+	s.pArena = (uintptr)(unsafe.Pointer(pa))
 	s.needzero = 1
 	h.setSpan(s.base(), s)
 	h.setSpan(s.base()+s.npages*pageSize-1, s)
@@ -316,7 +336,7 @@ func (ar *pArena) reconstruct() {
 	// We need to add the space occupied by the common persistent memory header
 	// for the first arena.
 	var off uintptr
-	if ar.fileOffset == 0 {
+	if pa.fileOffset == 0 {
 		off = pmemHeaderSize
 	}
 
@@ -331,7 +351,7 @@ func (ar *pArena) reconstruct() {
 		if sVal != 0 {
 			baseAddr := spanBase + uintptr(i<<pageShift)
 			s := createSpan(sVal, baseAddr)
-			restoreSpanHeapBits(s)
+			ar.restoreSpanHeapBits(s)
 		}
 	}
 }
@@ -576,20 +596,11 @@ func SetRoot(addr unsafe.Pointer) (err error) {
 	return
 }
 
-// EnableGC runs a full GC cycle as a stop-the-world event. This is written as a
-// separate function to PmemInit() so that the application can do any pointer
-// manipulation (such as swizzling) before a full GC cycle is run.
+// enableGC runs a full GC cycle as a stop-the-world event.
 // The argumnet gcp specifies garbage collection percentage and controls how
 // often GC is run (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
 // Default value of gcp is 100.
-// Users are required to initialize persistent memory as follows:
-// (1) Call PmemInit to initialize persistent memory
-// (2) Call EnableGC()
-// This function would be removed when runtime supports pointer swizzling.
-func EnableGC(gcp int) (err error) {
-	if pmemInfo.initState != initDone {
-		return error(errorString("Persistent memory uninitialized"))
-	}
+func enableGC(gcp int) {
 	setGCPercent(int32(gcp)) // restore GC percentage
 	// Run GC so that unused memory in reconstructed spans are reclaimed
 	stw := debug.gcstoptheworld
@@ -599,7 +610,6 @@ func EnableGC(gcp int) (err error) {
 	GC()
 	// restore gcstoptheworld
 	debug.gcstoptheworld = stw
-	return
 }
 
 // Restores the heap type bit information for the reconstructed span 's'.
@@ -610,7 +620,7 @@ func EnableGC(gcp int) (err error) {
 // the runtime type bits for this span. The volatile type bits for this span
 // may be contained in one or more volatile arenas. Therefore, this function
 // copies the heap type bits in a per volatile-memory arena manner.
-func restoreSpanHeapBits(s *mspan) {
+func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
 	// total heap type bytes to be copied
 	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
@@ -640,4 +650,8 @@ func restoreSpanHeapBits(s *mspan) {
 		copied += (numSpanBytes / bytesPerBitmapByte)
 		spanAddr += numSpanBytes
 	}
+}
+
+func swizzleArenas(arenas []*arenaInfo) {
+	// TODO
 }
