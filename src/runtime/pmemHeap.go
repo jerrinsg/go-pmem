@@ -224,14 +224,14 @@ type arenaInfo struct {
 	mapAddr uintptr
 }
 
-func mapArenas() (err error) {
+func mapArenas() error {
 	// A slice containing information about each mapped arena
 	var arenas []*arenaInfo
 
 	if pmemHeader.mappedSize == pmemHeaderSize {
 		// The persistent memory file contains only the header section and does
 		// not contain any arenas.
-		return
+		return nil
 	}
 
 	var mapped uintptr
@@ -288,9 +288,11 @@ func mapArenas() (err error) {
 	// Update the next offset at which the persistent memory file should be mapped
 	pmemInfo.nextMapOffset = mapped
 
-	swizzleArenas(arenas)
-
-	return
+	err := swizzleArenas(arenas)
+	if err != nil {
+		unmapArenas(arenas)
+	}
+	return err
 }
 
 // A helper function that iterates the arena slice and unmaps all of them
@@ -652,6 +654,206 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	}
 }
 
-func swizzleArenas(arenas []*arenaInfo) {
-	// TODO
+type tuple struct {
+	s, e uintptr
+}
+
+func swizzleArenas(arenas []*arenaInfo) (err error) {
+	// The offset table stores, for each arena, the delta value by which pointers
+	// that point into this arena should be offset by.
+	offsetTable := make([]int, len(arenas))
+
+	// rangeTable stores the address range at which each arena is mapped at.
+	rangeTable := make([]tuple, len(arenas))
+
+	if pmemHeader.swizzleState == swizzleSetup {
+		// There was a swizzle setup operating happening which did not complete.
+		// Revert the log entries (if any) found in each arena. This would revert
+		// any partial updates to mapAddr and delta value of each arena
+		for _, ar := range arenas {
+			pa := ar.pa
+			pa.revertLog()
+		}
+
+		// Reset swizzle state to swizzleDone
+		pmemHeader.setSwizzleState(swizzleDone)
+	}
+
+	if pmemHeader.swizzleState == swizzleOngoing {
+		// There was a swizzle operation ongoing previously that has to be
+		// completed first
+
+		// Revert log entries (if any) found in each arena
+		for i, ar := range arenas {
+			pa := ar.pa
+			pa.revertLog()
+			// Compute the offset and range value for this arena
+			offsetTable[i] = pa.delta
+			rangeTable[i].s = uintptr(int(pa.mapAddr) - pa.delta)
+			rangeTable[i].e = uintptr(int(pa.mapAddr) - pa.delta + int(pa.size))
+		}
+
+		// Complete any partially completed swizzling operation
+		for _, ar := range arenas {
+			ar.swizzle(offsetTable, rangeTable)
+		}
+
+		// Change the delta value in all arenas to 0. This has to be done before
+		// state is set as swizzleDone.
+		for _, ar := range arenas {
+			pa := ar.pa
+			pa.logEntry(unsafe.Pointer(&pa.delta))
+			pa.delta = 0
+			PersistRange(unsafe.Pointer(&pa.delta), intSize)
+			// The data logged here will be discarded when resetLog() is called
+			// before pointers are swizzled.
+		}
+
+		// Set swizzle state as swizzleDone
+		pmemHeader.setSwizzleState(swizzleDone)
+	}
+
+	// At this point any partially completed swizzle operation from previous runs
+	// is completed. If swizzling is required for this run, do that now.
+	for i, ar := range arenas {
+		// Set bytesSwizzled as 0. This can be done without logging as
+		// swizzling is considered to have started only when swizzleState is set
+		// as swizzleOngoing.
+		pa := ar.pa
+		pa.bytesSwizzled = 0
+		PersistRange(unsafe.Pointer(&pa.bytesSwizzled), intSize)
+		pa.resetLog()
+
+		// Compute the offset and range value for this arena using the new
+		// mapped address
+		offsetTable[i] = int(ar.mapAddr) - (int(pa.mapAddr) - pa.delta)
+		rangeTable[i].s = uintptr(int(pa.mapAddr) - pa.delta)
+		rangeTable[i].e = uintptr(int(pa.mapAddr) - pa.delta + int(pa.size))
+	}
+
+	// Set swizzle state as swizzleSetup
+	pmemHeader.setSwizzleState(swizzleSetup)
+
+	for i, ar := range arenas {
+		pa := ar.pa
+		// Write the new map address and delta value to arena header
+		pa.logEntry(unsafe.Pointer(&pa.mapAddr))
+		pa.logEntry(unsafe.Pointer(&pa.delta))
+		pa.mapAddr = ar.mapAddr
+		pa.delta = offsetTable[i]
+		// Commit persists the changes and then resets the log
+		pa.commitLog()
+	}
+
+	// Set swizzle state as swizzleOngoing
+	pmemHeader.setSwizzleState(swizzleOngoing)
+
+	// Swizzle pointers in each arena
+	for _, ar := range arenas {
+		ar.swizzle(offsetTable, rangeTable)
+	}
+
+	for _, ar := range arenas {
+		pa := ar.pa
+		pa.logEntry(unsafe.Pointer(&pa.delta))
+		pa.delta = 0
+		PersistRange(unsafe.Pointer(&pa.delta), intSize)
+	}
+
+	// Set swizzle state as swizzleDone
+	pmemHeader.setSwizzleState(swizzleDone)
+
+	for _, ar := range arenas {
+		pa := ar.pa
+		pa.resetLog()
+	}
+
+	// The address of the application root pointer may have changed. So compute
+	// the address of the root pointer, and set it as the root pointer.
+	newRoot := computeRootAddr(pmemHeader.rootOffset, arenas)
+	err = SetRoot(newRoot)
+
+	return
+}
+
+// Given the offset to the application root pointer in the persistent memory
+// file, this function computes the actual virtual memory address corresponding
+// to the root offset.
+func computeRootAddr(offset uintptr, arenas []*arenaInfo) unsafe.Pointer {
+	tot := uintptr(0)
+	for _, ar := range arenas {
+		pa := ar.pa
+		if offset < tot+pa.size {
+			aOff := offset - tot
+			pu := uintptr(unsafe.Pointer(pa))
+			return unsafe.Pointer(pu + aOff)
+		}
+		tot += pa.size
+	}
+	return nil
+}
+
+func (ph *pHeader) setSwizzleState(state int) {
+	ph.swizzleState = state
+	PersistRange(unsafe.Pointer(&ph.swizzleState), intSize)
+}
+
+// Find which arena index would have contained pointer x
+func findArenaIndex(x uintptr, rangeTable []tuple) int {
+	for i, t := range rangeTable {
+		if x >= t.s && x < t.e {
+			return i
+		}
+	}
+	return -1
+}
+
+// Swizzle arena pa. skip is the number of bytes in the beginning of the arena
+// that has to be skipped for swizzling.
+func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple) {
+	pa := ar.pa
+	mdata, allocSize := pa.layout()
+	start := ar.mapAddr + mdata
+
+	for done := pa.bytesSwizzled; done < allocSize; done += 8 {
+		addr := start + done
+		au := (*uintptr)(unsafe.Pointer(addr))
+		if *au == 0 {
+			continue
+		}
+		h := heapBitsForAddr(addr)
+		if h.isPointer() {
+			newAddr := swizzlePointer(*au, offsetTable, rangeTable)
+			if newAddr == *au {
+				// Pointer need not be swizzled
+				continue
+			}
+
+			pa.logEntry(unsafe.Pointer(&pa.bytesSwizzled))
+			pa.logEntry(unsafe.Pointer(addr))
+
+			pa.bytesSwizzled = (done + 8)
+			*au = newAddr
+
+			// Commit persists the changes and then resets the log
+			pa.commitLog()
+		}
+	}
+
+	pa.bytesSwizzled = allocSize
+	PersistRange(unsafe.Pointer(&pa.bytesSwizzled), intSize)
+}
+
+// Given the offset table and the range table, swizzlePointer() computes the
+// swizzled pointer address correspondong to 'ptr'.
+func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr {
+	// If findArenaIndex() returns -1, it indicates that 'ptr' is not a
+	// valid persistent memory address. Hence return 0.
+	ind := findArenaIndex(ptr, rangeTable)
+	if ind == -1 {
+		return 0
+	}
+
+	off := offsetTable[ind]
+	return uintptr(int(ptr) + off)
 }
