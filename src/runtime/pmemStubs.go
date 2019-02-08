@@ -21,7 +21,7 @@ func Fence() {
 	throw("Not implemented")
 }
 
-func mapFile(path string, len, flags, mode, off int,
+func mapFile(path string, len, flags, mode int, off uintptr,
 	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
 	throw("Not implemented")
 	return

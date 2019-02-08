@@ -97,7 +97,7 @@ func verifyMetadata() error {
 	for totalArenaSize < mappedSize {
 		arenaOff := uintptr(0)
 		mapAddr, isPmem, err := mapFile(pmemInfo.fname, pageSize, fileCreate,
-			_DEFAULT_FMODE, int(totalArenaSize), nil)
+			_DEFAULT_FMODE, totalArenaSize, nil)
 		if err != 0 {
 			return error(errorString("Arena map failed"))
 		}

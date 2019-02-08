@@ -244,7 +244,7 @@ func mapArenas() error {
 			offset = pmemHeaderSize
 		}
 		mapAddr, _, err := mapFile(pmemInfo.fname, int(pArenaHeaderSize+offset),
-			fileCreate, _DEFAULT_FMODE, int(mapped), nil)
+			fileCreate, _DEFAULT_FMODE, mapped, nil)
 		if err != 0 {
 			unmapArenas(arenas)
 			return error(errorString("Arena mapping failed"))
@@ -259,11 +259,11 @@ func mapArenas() error {
 		// Try mapping the arena at the exact address it was mapped previously
 		// mapFile() will fail if the file cannot be mapped at the requested address
 		mapAddr, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
-			_DEFAULT_FMODE, int(mapped), arenaMapAddr)
+			_DEFAULT_FMODE, mapped, arenaMapAddr)
 		if err != 0 {
 			// Try mapping the arena again, but at any address
 			mapAddr, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
-				_DEFAULT_FMODE, int(mapped), nil)
+				_DEFAULT_FMODE, mapped, nil)
 			if err != 0 {
 				unmapArenas(arenas)
 				return error(errorString("Arena mapping failed"))

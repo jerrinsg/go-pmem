@@ -37,7 +37,7 @@ const (
 // If the file length is less than the region requested to be mapped, then the
 // file will be extended to accommodate the map request.
 // Some of the code layout taken from PMDK's libpmem library.
-func mapFile(path string, len, flags, mode, off int,
+func mapFile(path string, len, flags, mode int, off uintptr,
 	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
 	openFlags := _O_RDRW
 	delFileOnErr := false
@@ -124,16 +124,16 @@ func mapFile(path string, len, flags, mode, off int,
 	return
 }
 
-func mapHelper(fd int32, flags, len, off int,
+func mapHelper(fd int32, flags, len int, off uintptr,
 	mapAddr unsafe.Pointer, fsize int) (addr unsafe.Pointer, isPmem bool, err int) {
-	if fsize < (off + len) {
+	if fsize < (int(off) + len) {
 		// Need to extend the file to map the file
 		// set the length of the file to 'off+len'
-		if err = int(ftruncate(uintptr(fd), uintptr(len+off))); err != 0 {
+		if err = int(ftruncate(uintptr(fd), uintptr(len)+off)); err != 0 {
 			println("mapFd: ftruncate() failed")
 			return
 		}
-		if err = int(fallocate(uintptr(fd), 0, uintptr(off), uintptr(len))); err != 0 {
+		if err = int(fallocate(uintptr(fd), 0, off, uintptr(len))); err != 0 {
 			println("mapFd: fallocate() failed")
 			return
 		}
