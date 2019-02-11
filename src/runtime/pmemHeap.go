@@ -659,6 +659,9 @@ type tuple struct {
 }
 
 func swizzleArenas(arenas []*arenaInfo) (err error) {
+	// Channel used to synchronize between goroutines that are used to swizzle
+	// arenas.
+	dc := make(chan bool, len(arenas))
 	// The offset table stores, for each arena, the delta value by which pointers
 	// that point into this arena should be offset by.
 	offsetTable := make([]int, len(arenas))
@@ -695,7 +698,11 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 		// Complete any partially completed swizzling operation
 		for _, ar := range arenas {
-			ar.swizzle(offsetTable, rangeTable)
+			go ar.swizzle(offsetTable, rangeTable, dc)
+		}
+		// Wait until all goroutines complete swizzling.
+		for range arenas {
+			<-dc
 		}
 
 		// Change the delta value in all arenas to 0. This has to be done before
@@ -750,7 +757,11 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 	// Swizzle pointers in each arena
 	for _, ar := range arenas {
-		ar.swizzle(offsetTable, rangeTable)
+		go ar.swizzle(offsetTable, rangeTable, dc)
+	}
+	// Wait until all goroutines complete swizzling.
+	for range arenas {
+		<-dc
 	}
 
 	for _, ar := range arenas {
@@ -810,7 +821,7 @@ func findArenaIndex(x uintptr, rangeTable []tuple) int {
 
 // Swizzle arena pa. skip is the number of bytes in the beginning of the arena
 // that has to be skipped for swizzling.
-func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple) {
+func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool) {
 	pa := ar.pa
 	mdata, allocSize := pa.layout()
 
@@ -888,6 +899,7 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple) {
 
 	pa.bytesSwizzled = allocSize
 	PersistRange(unsafe.Pointer(&pa.bytesSwizzled), intSize)
+	dc <- true
 }
 
 // Given the offset table and the range table, swizzlePointer() computes the
