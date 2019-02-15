@@ -225,6 +225,7 @@ type arenaInfo struct {
 }
 
 func mapArenas() error {
+	h := &mheap_
 	// A slice containing information about each mapped arena
 	var arenas []*arenaInfo
 
@@ -273,7 +274,9 @@ func mapArenas() error {
 		// Create the volatile memory arena datastructures for the newly mapped
 		// heap regions. Each volatile arena datastructure contains the runtime
 		// heap type bitmap and span table for the region it manages.
-		mheap_.createArenaMetadata(mapAddr, arenaSize)
+		lock(&h.lock)
+		h.createArenaMetadata(mapAddr, arenaSize)
+		unlock(&h.lock)
 
 		mapped += arenaSize
 
@@ -292,6 +295,7 @@ func mapArenas() error {
 	if err != nil {
 		unmapArenas(arenas)
 	}
+
 	return err
 }
 
@@ -321,20 +325,6 @@ func (ar *arenaInfo) reconstruct() {
 	allocPages := allocSize >> pageShift
 	spanBase := ar.mapAddr + mdata
 
-	// Create a span for this arena and free it so that it will be added to
-	// the mheap free list.
-	lock(&h.lock)
-	s := (*mspan)(h.spanalloc.alloc())
-	s.init(spanBase, allocPages)
-	s.memtype = isPersistent
-	s.pArena = (uintptr)(unsafe.Pointer(pa))
-	s.needzero = 1
-	h.setSpan(s.base(), s)
-	h.setSpan(s.base()+s.npages*pageSize-1, s)
-	s.state = mSpanManual
-	h.freeSpanLocked(s, false, true, 0)
-	unlock(&h.lock)
-
 	// We need to add the space occupied by the common persistent memory header
 	// for the first arena.
 	var off uintptr
@@ -349,11 +339,26 @@ func (ar *arenaInfo) reconstruct() {
 	spanBitmap := (*(*[1 << 28]uint32)(spanBitsAddr))[:allocPages]
 
 	// Iterate over the span bitmap log and recreate spans one by one
-	for i, sVal := range spanBitmap {
-		if sVal != 0 {
-			baseAddr := spanBase + uintptr(i<<pageShift)
-			s := createSpan(sVal, baseAddr)
+	var i, j uintptr
+	for i < allocPages {
+		sval := spanBitmap[i]
+		addr := spanBase + (i << pageShift)
+		if sval == 0 {
+			for j = i + 1; j < allocPages; j++ {
+				if spanBitmap[j] != 0 {
+					break
+				}
+			}
+			npages := (j - i)
+			lock(&h.lock)
+			freeSpan(npages, addr, 1, (uintptr)(unsafe.Pointer(pa)))
+			unlock(&h.lock)
+			i += npages
+		} else {
+			s := createSpan(sval, addr)
+			s.pArena = (uintptr)(unsafe.Pointer(pa))
 			ar.restoreSpanHeapBits(s)
+			i += s.npages
 		}
 	}
 }
@@ -362,17 +367,17 @@ func (ar *arenaInfo) reconstruct() {
 // spanclass, number of pages, the needzero value, etc. and calls the core
 // reconstruction function createSpanCore.
 func createSpan(sVal uint32, baseAddr uintptr) *mspan {
-	var npages int
+	var npages uintptr
 	var spc spanClass
 	large := false
 	needzero := ((sVal & 1) == 1)
 	if sVal > maxSmallSpanLogVal { // large allocation
 		large = true
 		noscan := ((sVal >> 1 & 1) == 1)
-		npages = int((sVal >> 2) - 66 + 4)
+		npages = uintptr((sVal >> 2) - 66 + 4)
 		spc = makeSpanClass(0, noscan)
 	} else {
-		npages = int(class_to_allocnpages[sVal>>2])
+		npages = uintptr(class_to_allocnpages[sVal>>2])
 		spc = spanClass(sVal >> 1)
 	}
 	return createSpanCore(spc, baseAddr, npages, large, needzero)
@@ -384,35 +389,11 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 // trims out any unnecessary regions from the span obtained from the search, sets
 // the necessary metadata for the span, and restores the heap type bit information
 // for this span.
-func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero bool) *mspan {
+func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *mspan {
 	h := &mheap_
-	// lock mheap before searching for the required span
-	lock(&h.lock)
-	s := h.searchSpanLocked(base, npages)
-	if s == nil {
-		println("Unable to reconstruct span for address ", hex(base))
-		throw("Unable to complete persistent memory metadata reconstruction")
-	}
 
-	// set span state as mSpanManual so that the spans freed below (corresponding
-	// to the trailing and leading pages) do not coalesce with s.
-	s.state = mSpanManual
-	// The span we found from the search might contain more pages than necessary.
-	// Trim the leading and trailing pages of the span.
-	leadpages := (base - s.base()) >> pageShift
-	if leadpages > 0 {
-		freeSpan(leadpages, s.base(), s.needzero, s.pArena)
-	}
-
-	trailpages := s.npages - leadpages - uintptr(npages)
-	if trailpages > 0 {
-		freeSpan(trailpages, base+uintptr(npages*pageSize), s.needzero, s.pArena)
-	}
-
-	// Initialize s with the correct base address and number of pages
-	s.init(base, uintptr(npages))
-	h.setSpans(s.base(), s.npages, s)
-
+	s := (*mspan)(h.spanalloc.alloc())
+	s.init(base, npages)
 	// Initialize other metadata of s
 	s.state = mSpanInUse
 	s.memtype = isPersistent
@@ -437,10 +418,10 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 
 	if large == false {
 		size := uintptr(class_to_size[spc.sizeclass()])
-		n := uintptr(npages<<pageShift) / size
+		n := (npages << pageShift) / size
 		s.limit = s.base() + size*n
 	} else {
-		s.limit = s.base() + (uintptr(npages) << pageShift)
+		s.limit = s.base() + (npages << pageShift)
 	}
 
 	_, ln, _ := s.layout()
@@ -459,7 +440,10 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	s.allocBits = newAllocBits(s.nelems)
 	s.gcmarkBits = newMarkBits(s.nelems)
 
+	h.setSpans(s.base(), s.npages, s)
+
 	// Put span s in the appropriate memory allocator list
+	lock(&h.lock)
 	if large {
 		h.busy[isPersistent].insertBack(s)
 	} else {
@@ -491,55 +475,6 @@ func createSpanCore(spc spanClass, base uintptr, npages int, large, needzero boo
 	h.sweepSpans[(h.sweepgen / 2 % 2)].push(s)
 	unlock(&h.lock)
 
-	return s
-}
-
-// Function to search the memory allocator free treap to find if it contains a
-// large-enough span that can contain the required span with start address
-// 'baseAddr' and 'npages' number of pages
-func treapSearch(root *treapNode, baseAddr uintptr, npages uintptr) *mspan {
-	if root == nil {
-		return nil
-	}
-	key := root.spanKey
-
-	// Check if key points to a span that has base address less than or equal
-	// to 'baseAddr' and has the required number of pages
-	if key.base() <= baseAddr && (key.base()+key.npages*pageSize) >=
-		baseAddr+uintptr(npages*pageSize) {
-		mheap_.free[isPersistent].removeNode(root)
-		return key
-	}
-
-	// Recursively search the left subtree
-	if root.left != nil && npages <= key.npages {
-		if sl := treapSearch(root.left, baseAddr, npages); sl != nil {
-			return sl
-		}
-	}
-
-	// Recursively search the right subtree
-	if root.right != nil {
-		if sr := treapSearch(root.right, baseAddr, npages); sr != nil {
-			return sr
-		}
-	}
-
-	return nil
-}
-
-// Function that searches the mheap free large treap and free lists to find a
-// large span that can contain the required span with 'npages' number of spans
-// starting  at address 'baseAddr'.
-// mheap must be locked before calling this function.
-func (h *mheap) searchSpanLocked(baseAddr uintptr, npages int) *mspan {
-	// Check the free treap to see if it has a large span that can
-	// contain the required span
-	treapRoot := h.free[isPersistent].treap
-	var s *mspan
-	systemstack(func() {
-		s = treapSearch(treapRoot, baseAddr, uintptr(npages))
-	})
 	return s
 }
 
