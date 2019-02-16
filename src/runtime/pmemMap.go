@@ -13,6 +13,13 @@ const (
 	fileAllFlags      = fileCreate | fileExcl
 	fileDaxValidFlags = fileCreate
 
+	// The valid file open modes that can be passed to the open system call are
+	// 0400, 0200, etc (see http://man7.org/linux/man-pages/man2/open.2.html).
+	// setuid, setgid, and setting sticky bit has an effect only on executable
+	// files and directories, and hence not supported. validFileModes constant
+	// is used to verify that the file mode passed to mapFile is supported.
+	validFileModes = 0777
+
 	_O_RDRW = 0x0002 // open for reading and writing
 	_O_EXCL = 0x0800 // exclusive mode - error if file already exists
 
@@ -81,6 +88,15 @@ func mapFile(path string, len, flags, mode int, off uintptr,
 				return
 			}
 			openFlags |= _O_CREAT
+		}
+
+		// Verify that the mode passed to mapFile is valid. mode is used by the
+		// open system call only when O_CREAT flag is specified.
+		if flags&fileCreate != 0 {
+			if mode & ^validFileModes != 0 {
+				println("Invalid file mode")
+				return
+			}
 		}
 
 		if flags&fileExcl != 0 {
