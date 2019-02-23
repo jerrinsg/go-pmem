@@ -781,8 +781,10 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 	// The address of the application root pointer may have changed. So compute
 	// the address of the root pointer, and set it as the root pointer.
-	newRoot := computeRootAddr(pmemHeader.rootOffset, arenas)
-	err = SetRoot(newRoot)
+	if pmemHeader.rootOffset != 0 {
+		newRoot := computeRootAddr(pmemHeader.rootOffset, arenas)
+		err = SetRoot(newRoot)
+	}
 
 	return
 }

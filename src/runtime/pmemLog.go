@@ -137,7 +137,6 @@ func logSpanFree(s *mspan) {
 // For a small span, the value logged is -
 // ((s.spc) << 1 | s.needzero) and for a large span the value logged is -
 // ((66+s.npages-4) << 2 | s.spc << 1 | s.needzero)
-// See definition of logBytesPerPage for more details.
 func spanLogValue(s *mspan) uint32 {
 	var logVal uintptr
 	if s.elemsize > maxSmallSize { // large allocation
