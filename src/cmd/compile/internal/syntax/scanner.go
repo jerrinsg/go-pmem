@@ -345,10 +345,10 @@ func (s *scanner) ident() {
 	s.ungetr()
 
 	lit := s.stopLit()
-
+	mapIndex, ok := keywordIndexInMap[string(lit)]
 	// possibly a keyword
-	if len(lit) >= 2 {
-		if tok := keywordMap[hash(lit)]; tok != 0 && tokStrFast(tok) == string(lit) {
+	if ok && len(lit) >= 2 {
+		if tok := keywordMap[mapIndex]; tok != 0 && tokStrFast(tok) == string(lit) {
 			s.nlsemi = contains(1<<_Break|1<<_Continue|1<<_Fallthrough|1<<_Return, tok)
 			s.tok = tok
 			return
@@ -389,15 +389,20 @@ func hash(s []byte) uint {
 }
 
 var keywordMap [1 << 6]token // size must be power of two
+var keywordIndexInMap map[string]int
 
 func init() {
+	var i int
+	keywordIndexInMap = make(map[string]int)
 	// populate keywordMap
 	for tok := _Break; tok <= _Var; tok++ {
-		h := hash([]byte(tok.String()))
-		if keywordMap[h] != 0 {
+		// h := hash([]byte(tok.String()))
+		if keywordMap[i] != 0 {
 			panic("imperfect hash")
 		}
-		keywordMap[h] = tok
+		keywordIndexInMap[tok.String()] = i
+		keywordMap[i] = tok
+		i++
 	}
 }
 

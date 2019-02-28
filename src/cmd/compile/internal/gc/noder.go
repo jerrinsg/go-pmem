@@ -86,6 +86,10 @@ func (p *noder) makeSrcPosBase(b0 *syntax.PosBase) *src.PosBase {
 		fn := b0.Filename()
 		if b0.IsFileBase() {
 			b1 = src.NewFileBase(fn, absFilename(fn))
+		} else if b0 == nil {
+			// injected code by tx changes
+			fn = "transact.go" // assign temporary file name to injected stmts
+			b1 = src.NewFileBase(fn, absFilename(fn))
 		} else {
 			// line directive base
 			p0 := b0.Pos()

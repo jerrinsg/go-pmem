@@ -25,9 +25,11 @@ type parser struct {
 	errcnt int      // number of errors encountered
 	pragma Pragma   // pragma flags
 
-	fnest  int    // function nesting level (for error handling)
-	xnest  int    // expression nesting level (for complit ambiguity resolution)
-	indent []byte // tracing support
+	fnest       int    // function nesting level (for error handling)
+	xnest       int    // expression nesting level (for complit ambiguity resolution)
+	indent      []byte // tracing support
+	inTxBlock   bool
+	txNeedToLog bool
 }
 
 func (p *parser) init(file *PosBase, r io.Reader, errh ErrorHandler, pragh PragmaHandler, mode Mode) {
@@ -973,6 +975,9 @@ loop:
 			p.xnest--
 
 		case _Lparen:
+			if p.inTxBlock {
+				p.syntaxError("unexpected function call within transaction")
+			}
 			t := new(CallExpr)
 			t.pos = pos
 			t.Fun = x
@@ -1609,12 +1614,18 @@ func (p *parser) simpleStmt(lhs Expr, keyword token) SimpleStmt {
 		case _AssignOp:
 			// lhs op= rhs
 			op := p.op
+			if p.inTxBlock {
+				p.txNeedToLog = true
+			}
 			p.next()
 			return p.newAssignStmt(pos, op, lhs, p.expr())
 
 		case _IncOp:
 			// lhs++ or lhs--
 			op := p.op
+			if p.inTxBlock {
+				p.txNeedToLog = true
+			}
 			p.next()
 			return p.newAssignStmt(pos, op, lhs, ImplicitOne)
 
@@ -1643,6 +1654,12 @@ func (p *parser) simpleStmt(lhs Expr, keyword token) SimpleStmt {
 		var op Operator
 		if p.tok == _Define {
 			op = Def
+		} else { // p.tok = _Assign
+			if p.inTxBlock {
+				if _, ok := lhs.(*ListExpr); !ok { // lhs not a list expression
+					p.txNeedToLog = true
+				}
+			}
 		}
 		p.next()
 
@@ -2018,6 +2035,72 @@ func (p *parser) commClause() *CommClause {
 	return c
 }
 
+func ParseStmtFromScratch(s string) Stmt {
+	var pTmp parser
+	src := "package p; func _() { " + s + "; }"
+	f, err := Parse(nil, strings.NewReader(src), nil, nil, 0)
+	if err != nil {
+		pTmp.syntaxError("parse error in injecting statement")
+	}
+	return f.DeclList[0].(*FuncDecl).Body.List[0]
+}
+
+func newLogTxStmt(v string) Stmt {
+	s := "tx.Log(" + v + ")"
+	return ParseStmtFromScratch(s)
+}
+
+func getVarNameFromLHS(e Expr) (s string) {
+	switch t := e.(type) {
+	case *Name:
+		s = t.Value
+	case *BasicLit:
+		s = t.Value
+	case *ParenExpr:
+		s = getVarNameFromLHS(t.X)
+	case *SelectorExpr:
+		s = getVarNameFromLHS(t.X) + "." + t.Sel.Value
+	case *IndexExpr:
+		s = getVarNameFromLHS(t.X) + "[" + getVarNameFromLHS(t.Index) + "]"
+	case *Operation:
+		if t.Op == Mul {
+			s = getVarNameFromLHS(t.X)
+		} else {
+			panic(fmt.Sprintf("injecting tx logging for type %T, op %T not supported", t, t.Op))
+		}
+	default:
+		panic(fmt.Sprintf("injecting tx logging for type %T not supported", t))
+	}
+	return s
+}
+
+func (p *parser) txBlock(declTx bool) []Stmt {
+	p.next()
+	p.want(_Lparen)
+	p.want(_Rparen) // Not expecting any argument in transact() use
+	p.inTxBlock = true
+	var (
+		s     string
+		sList []Stmt
+	)
+	if declTx {
+		s = "var tx transaction.TX"
+		sList = append(sList, ParseStmtFromScratch(s))
+	}
+	s = "tx = transaction.NewUndoTx()"
+	sList = append(sList, ParseStmtFromScratch(s))
+	s = "tx.Begin()"
+	sList = append(sList, ParseStmtFromScratch(s))
+	b := p.blockStmt("")
+	sList = append(sList, b.List...)
+	p.inTxBlock = false
+	s = "tx.End()"
+	sList = append(sList, ParseStmtFromScratch(s))
+	s = "transaction.Release(tx)"
+	sList = append(sList, ParseStmtFromScratch(s))
+	return sList
+}
+
 // Statement =
 // 	Declaration | LabeledStmt | SimpleStmt |
 // 	GoStmt | ReturnStmt | BreakStmt | ContinueStmt | GotoStmt |
@@ -2101,7 +2184,8 @@ func (p *parser) stmtOrNil() Stmt {
 		p.next()
 		s.Label = p.name()
 		return s
-
+	case _Transact:
+		panic("parser.stmtorNil() don't know how to handle transact keyword")
 	case _Return:
 		s := new(ReturnStmt)
 		s.pos = p.pos()
@@ -2125,11 +2209,27 @@ func (p *parser) stmtList() (l []Stmt) {
 	if trace {
 		defer p.trace("stmtList")()
 	}
-
+	firstTxKey := true
 	for p.tok != _EOF && p.tok != _Rbrace && p.tok != _Case && p.tok != _Default {
+		if p.tok == _Transact {
+			l = append(l, p.txBlock(firstTxKey)...)
+			firstTxKey = false
+		}
 		s := p.stmtOrNil()
 		if s == nil {
 			break
+		}
+		if p.txNeedToLog {
+			if a, ok := s.(*AssignStmt); ok {
+				v := getVarNameFromLHS(a.Lhs)
+				if _, ok := a.Lhs.(*Operation); !ok {
+					v = "&" + v
+				}
+				l = append(l, newLogTxStmt(v))
+			} else {
+				p.syntaxError("error injecting tx logging statement")
+			}
+			p.txNeedToLog = false
 		}
 		l = append(l, s)
 		// ";" is optional before "}"
