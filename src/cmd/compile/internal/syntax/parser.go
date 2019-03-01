@@ -2077,7 +2077,7 @@ func getVarNameFromLHS(e Expr) (s string) {
 func (p *parser) txBlock(declTx bool) []Stmt {
 	p.next()
 	p.want(_Lparen)
-	p.want(_Rparen) // Not expecting any argument in transact() use
+	p.want(_Rparen) // Not expecting any argument in txn() use
 	p.inTxBlock = true
 	var (
 		s     string
@@ -2184,8 +2184,8 @@ func (p *parser) stmtOrNil() Stmt {
 		p.next()
 		s.Label = p.name()
 		return s
-	case _Transact:
-		panic("parser.stmtorNil() don't know how to handle transact keyword")
+	case _Txn:
+		panic("parser.stmtorNil() don't know how to handle txn keyword")
 	case _Return:
 		s := new(ReturnStmt)
 		s.pos = p.pos()
@@ -2211,7 +2211,7 @@ func (p *parser) stmtList() (l []Stmt) {
 	}
 	firstTxKey := true
 	for p.tok != _EOF && p.tok != _Rbrace && p.tok != _Case && p.tok != _Default {
-		if p.tok == _Transact {
+		if p.tok == _Txn {
 			l = append(l, p.txBlock(firstTxKey)...)
 			firstTxKey = false
 		}
