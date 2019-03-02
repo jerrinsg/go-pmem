@@ -36,6 +36,11 @@ func BuildInit() {
 }
 
 func instrumentInit() {
+	if cfg.BuildTxn {
+		forcedGcflags = append(forcedGcflags, "-txn")
+		// TODO: This might be needed when auto-adding imports for transaction
+		//forcedLdflags = append(forcedLdflags, "-txn")
+	}
 	if !cfg.BuildRace && !cfg.BuildMSan {
 		return
 	}
