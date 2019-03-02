@@ -8,10 +8,9 @@ import (
 )
 
 const (
-	fileCreate        = (1 << 0)
-	fileExcl          = (1 << 1)
-	fileAllFlags      = fileCreate | fileExcl
-	fileDaxValidFlags = fileCreate
+	fileCreate   = (1 << 0)
+	fileExcl     = (1 << 1)
+	fileAllFlags = fileCreate | fileExcl
 
 	// The valid file open modes that can be passed to the open system call are
 	// 0400, 0200, etc (see http://man7.org/linux/man-pages/man2/open.2.html).
@@ -62,25 +61,8 @@ func mapFile(path string, len, flags, mode int, off uintptr,
 
 	devDax := isFileDevDax(path)
 	if devDax {
-		if flags & ^fileDaxValidFlags != 0 {
-			println("Flag unsupported for Device DAX")
-			return
-		}
-		if off != 0 {
-			println("Offset not supported for Device DAX")
-			return
-		}
-		devSize := getFileSize(path)
-		if devSize < 0 {
-			println("Unable to get device DAX size")
-		}
-		if len != 0 && len != devSize {
-			println("Device DAX length must be either 0 or the exact size of the device")
-			return
-		}
-		len = devSize
-		// ignore all of the flags for devdax
-		flags = 0
+		println("Device DAX not supported")
+		return
 	} else {
 		if flags&fileCreate != 0 {
 			if len < 0 {
