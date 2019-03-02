@@ -19,6 +19,16 @@ const (
 	GenTxn
 )
 
+// LogMode describes the logging library to be used for injecting tx statements
+type LogMode uint
+
+const (
+	NulllLog = iota
+	UndoLog
+	RedoLog
+	CustomLog
+)
+
 // Error describes a syntax error. Error implements the error interface.
 type Error struct {
 	Pos Pos

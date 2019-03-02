@@ -30,6 +30,7 @@ type parser struct {
 	indent      []byte // tracing support
 	inTxBlock   bool
 	txNeedToLog bool
+	logMode     LogMode
 }
 
 func (p *parser) init(file *PosBase, r io.Reader, errh ErrorHandler, pragh PragmaHandler, mode Mode) {
@@ -2074,15 +2075,51 @@ func getVarNameFromLHS(e Expr) (s string) {
 	return s
 }
 
-func (p *parser) txBlock(declTx bool) []Stmt {
+func (p *parser) txBlock(declTx bool) (sList []Stmt) {
 	p.next()
-	p.want(_Lparen)
-	p.want(_Rparen) // Not expecting any argument in txn() use
+	args, hasDots := p.argList()
+	if hasDots {
+		p.syntaxError("unexpected ... in args to txn() call")
+	}
+	if len(args) == 0 {
+		// no args => undo logging
+		p.logMode = UndoLog
+	} else if len(args) == 1 {
+		logger, ok := args[0].(*BasicLit)
+		if !ok {
+			p.syntaxError("unexpected arg in function call to txn()")
+		}
+		switch logger.Value {
+		case "\"undo\"":
+			p.logMode = UndoLog
+		case "\"redo\"":
+			// TODO: Remove this
+			p.syntaxError("redo logging in txn() not yet supported")
+		case "\"null\"":
+			p.logMode = NulllLog
+		default:
+			// TODO: Remove this
+			p.syntaxError("custom logging in txn() not yet supported")
+		}
+	} else {
+		p.syntaxError("unexpected no. of args in function call to txn()")
+	}
+	var s string
+	if p.logMode == NulllLog {
+		// Ad fake initialization to avoid syntax error due to unused import
+		s = "var tx transaction.TX"
+		sList = append(sList, ParseStmtFromScratch(s))
+		s = "_ = tx"
+		sList = append(sList, ParseStmtFromScratch(s))
+		return
+	}
+
+	// TODO: Remove this
+	if p.logMode != UndoLog {
+		panic("Only undo/null logging supported. Error in setting log mode")
+	}
+
 	p.inTxBlock = true
-	var (
-		s     string
-		sList []Stmt
-	)
 	if declTx {
 		s = "var tx transaction.TX"
 		sList = append(sList, ParseStmtFromScratch(s))
