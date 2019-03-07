@@ -165,5 +165,3 @@ func main() {
 }
 
 ```
-
-More design documents of this project can be found in the `design/` folder.
