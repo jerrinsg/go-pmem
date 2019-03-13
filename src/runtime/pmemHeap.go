@@ -533,20 +533,14 @@ func SetRoot(addr unsafe.Pointer) (err error) {
 	return
 }
 
-// enableGC runs a full GC cycle as a stop-the-world event.
+// enableGC runs a full GC cycle in a new goroutine.
 // The argumnet gcp specifies garbage collection percentage and controls how
 // often GC is run (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
 // Default value of gcp is 100.
 func enableGC(gcp int) {
 	setGCPercent(int32(gcp)) // restore GC percentage
 	// Run GC so that unused memory in reconstructed spans are reclaimed
-	stw := debug.gcstoptheworld
-	// set debug.gcstoptheworld as gcForceBlockMode so that GC runs as a
-	// stop-the-world event
-	debug.gcstoptheworld = int32(gcForceBlockMode)
-	GC()
-	// restore gcstoptheworld
-	debug.gcstoptheworld = stw
+	go GC()
 }
 
 // Restores the heap type bit information for the reconstructed span 's'.
