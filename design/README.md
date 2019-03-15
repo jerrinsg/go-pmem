@@ -5,14 +5,15 @@ programming language. Key contributions of this work are:
 * Garbage collection support for persistent memory
 * A heap recovery mechanism in case of an application crash/restart
 * Runtime pointer swizzling support
+* A dynamically sized persistent memory heap that can grow based on usage
 
 ## Language Extensions
 We have added two new APIs to Go to support persistent memory allocations:
-1. ```func pmake(t Type, size ...IntType) Type```
+1. ```func pmake(t Type, size ...IntType) Type```  
 The `pmake` API is used to create a slice in pmem. The semantics of `pmake` is
 exactly the same as the `make` API in Go. Creating maps and slices in persistent
 memory is not yet supported.
-2. ```func pnew(Type) *Type```
+2. ```func pnew(Type) *Type```  
 Just like `new`, `pnew` creates a zero-value object of the Type argument in
 persistent memory and returns a pointer to this object.
 
@@ -79,17 +80,17 @@ objects are actually in-use.
 
 ## Runtime APIs
 The runtime exposes a few APIs to help manage persistent memory.
-1. ```func PmemInit(fname string) (unsafe.Pointer, error)```
+1. ```func PmemInit(fname string) (unsafe.Pointer, error)```  
 `PmemInit` is the API used to initialize persistent memory. It takes the path to
 a file in persistent memory as input. It returns a pointer and an error. The
 error indicates if persistent memory initialization was successful. The pointer
 returned back is the application root pointer, if any was set previously using
 the `SetRoot()` API.
 
-2. ```func InPmem(addr uintptr) bool```
+2. ```func InPmem(addr uintptr) bool```  
 `InPmem` returns whether addr is a persistent memory pointer or not.
 
-3. ```func SetRoot(addr unsafe.Pointer) (err error)```
+3. ```func SetRoot(addr unsafe.Pointer) (err error)```  
 `SetRoot()` is used to set the application root pointer. The application root
 pointer is the pointer through which the application accesses all data in
 persistent memory.
@@ -102,7 +103,7 @@ Writes to a persistent memory file can be guaranteed to be persistent only
 when the data is flushed from the processor's cache. To ensure writes are
 persisted, the runtime offers a few cache flush APIs.
 
-1. ```func PersistRange(addr unsafe.Pointer, len uintptr)```
+1. ```func PersistRange(addr unsafe.Pointer, len uintptr)```  
 `PersistRange` flushes the CPU caches in the range `addr` to `addr+len`.
 If processor support is available, this call results in optimized cache flush
 instructions such as `clwb` and `clflushopt` being called. Since `clwb` and
@@ -115,11 +116,11 @@ If the optimized cache instructions are not available, `PersistRange` calls the
 If the persistent memory medium does not support direct-access (DAX), then
 `PersistRange` calls `msync()` instead of CPU cache flush instructions.
 
-2. ```func FlushRange(addr unsafe.Pointer, len uintptr)```
+2. ```func FlushRange(addr unsafe.Pointer, len uintptr)```  
 `FlushRange` is similar to `PersistRange`. But it calls only the data flush
 instructions but does not do a memory fence.
 
-3. ```func Fence()```
+3. ```func Fence()```  
 `Fence` is used to invoke a memory fence operation.
 
 ## Example Code
