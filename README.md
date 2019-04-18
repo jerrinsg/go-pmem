@@ -40,4 +40,4 @@ It is multi-threaded and implements a subset of the Redis commands. The
 advantages of Go Redis are: much faster database load time on a server restart
 due to its data being readily available in persistent memory and much higher
 data throughput thanks to the multithreaded Go implementation.  
-Project home page - TBD
+Project home page - https://github.com/vmware-samples/go-redis-pmem
