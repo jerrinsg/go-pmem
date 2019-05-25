@@ -374,6 +374,10 @@ type state struct {
 	cgoUnsafeArgs bool
 	hasdefer      bool // whether the function contains a defer statement
 	softFloat     bool
+
+	// store transaction interface's ssa.Value to be used for injecting Log()
+	// & ReadLog() calls during buildssa
+	txIntf *ssa.Value
 }
 
 type funcLine struct {
@@ -731,22 +735,34 @@ func (s *state) rawLoad(t *types.Type, src *ssa.Value) *ssa.Value {
 }
 
 func (s *state) store(t *types.Type, dst, val *ssa.Value) {
-	s.vars[&memVar] = s.newValue3A(ssa.OpStore, types.TypeMem, t, dst, val, s.mem())
+	if flag_txn && dst.WithinTx && !s.isAllocatedOnStack(dst) {
+		s.txnLog(dst, val)
+	} else {
+		s.vars[&memVar] = s.newValue3A(ssa.OpStore, types.TypeMem, t, dst, val, s.mem())
+	}
 }
 
 func (s *state) zero(t *types.Type, dst *ssa.Value) {
 	s.instrument(t, dst, true)
-	store := s.newValue2I(ssa.OpZero, types.TypeMem, t.Size(), dst, s.mem())
-	store.Aux = t
-	s.vars[&memVar] = store
+	if flag_txn && dst.WithinTx && !s.isAllocatedOnStack(dst) {
+		s.txnLog(dst, s.constInt(types.Types[TINT], 0))
+	} else {
+		store := s.newValue2I(ssa.OpZero, types.TypeMem, t.Size(), dst, s.mem())
+		store.Aux = t
+		s.vars[&memVar] = store
+	}
 }
 
 func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 	s.instrument(t, src, false)
 	s.instrument(t, dst, true)
-	store := s.newValue3I(ssa.OpMove, types.TypeMem, t.Size(), dst, src, s.mem())
-	store.Aux = t
-	s.vars[&memVar] = store
+	if flag_txn && dst.WithinTx && !s.isAllocatedOnStack(dst) {
+		s.txnLog(dst, src)
+	} else {
+		store := s.newValue3I(ssa.OpMove, types.TypeMem, t.Size(), dst, src, s.mem())
+		store.Aux = t
+		s.vars[&memVar] = store
+	}
 }
 
 // stmtList converts the statement list n to SSA and adds it to s.
@@ -888,6 +904,11 @@ func (s *state) stmt(n *Node) {
 			// which is bad because x is incorrectly considered
 			// dead before the vardef. See issue #14904.
 			return
+		}
+
+		if flag_txn && n.IsInjectedTxStmt() {
+			n.Left.SetInjectedTxStmt(true)
+			n.Right.SetInjectedTxReadLog(true)
 		}
 
 		// Evaluate RHS.
@@ -1678,6 +1699,9 @@ func (s *state) expr(n *Node) *ssa.Value {
 			return s.variable(n, n.Type)
 		}
 		addr := s.addr(n, false)
+		if flag_txn && n.IsInjectedTxReadLog() {
+			addr.WithinTx = true
+		}
 		return s.load(n.Type, addr)
 	case OCLOSUREVAR:
 		addr := s.addr(n, false)
@@ -2202,6 +2226,9 @@ func (s *state) expr(n *Node) *ssa.Value {
 
 	case OIND:
 		p := s.exprPtr(n.Left, false, n.Pos)
+		if flag_txn && n.IsInjectedTxReadLog() {
+			p.WithinTx = true
+		}
 		return s.load(n.Type, p)
 
 	case ODOT:
@@ -2682,6 +2709,9 @@ func (s *state) assign(left *Node, right *ssa.Value, deref bool, skip skipMask) 
 		s.vars[&memVar] = s.newValue1Apos(ssa.OpVarDef, types.TypeMem, left, s.mem(), !left.IsAutoTmp())
 	}
 	addr := s.addr(left, false)
+	if flag_txn && left.IsInjectedTxStmt() {
+		addr.WithinTx = true
+	}
 	if isReflectHeaderDataField(left) {
 		// Package unsafe's documentation says storing pointers into
 		// reflect.SliceHeader and reflect.StringHeader's Data fields
@@ -3680,6 +3710,9 @@ func (s *state) call(n *Node, k callKind) *ssa.Value {
 			Fatalf("OCALLINTER: n.Left not an ODOTINTER: %v", fn.Op)
 		}
 		i := s.expr(fn.Left)
+		if flag_txn && n.IsInjectedTxStmt() {
+			s.txIntf = i
+		}
 		itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], i)
 		s.nilCheck(itab)
 		itabidx := fn.Xoffset + 2*int64(Widthptr) + 8 // offset of fun field in runtime.itab
@@ -4111,10 +4144,160 @@ func (s *state) rtcall(fn *obj.LSym, returns bool, results []*types.Type, args .
 	return res
 }
 
+// isAllocatedOnStack returns whether v is known to be an address
+// derived from (*ssa).IsStackAddr(). If v is still an OpFwdRef, perform
+// a lookup to get a valid definition of v, prior to insertPhis().
+// TODO: (mohitv) This could fail for when direct definition of the variable
+// cannot be found. Eg: either a stack arg passed from a calling function
+// With force escape for variables on lhs of assignments within transaction,
+// this function may not be needed.
+func (s *state) isAllocatedOnStack(v *ssa.Value) bool {
+	if !flag_txn {
+		panic(fmt.Sprintf("flag_txn not set, but (*state).isAllocatedOnStack called"))
+	}
+	for v.Op == ssa.OpOffPtr || v.Op == ssa.OpAddPtr || v.Op == ssa.OpPtrIndex || v.Op == ssa.OpCopy {
+		v = v.Args[0]
+	}
+	switch v.Op {
+	case ssa.OpFwdRef:
+		var defVal *ssa.Value
+		var_ := v.Aux.(*Node)
+	loop:
+		for _, b := range s.f.Blocks {
+			if _, ok := s.defvars[b.ID][var_]; ok {
+				defVal = s.defvars[b.ID][var_]
+				break loop
+			}
+		}
+		if defVal == nil {
+			panic(fmt.Sprintf("[go-pmem] couldn't resolve OpFwdRef, don't know what to do"))
+		}
+		return s.isAllocatedOnStack(defVal)
+	case ssa.OpSP, ssa.OpLocalAddr:
+		return true
+	}
+	return false
+}
+
+// sets up call to a method of transaction interface
+// The method to call is specified through fnOffset.
+// Arguments to pass are in arg variable.
+func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) {
+	if s.txIntf == nil {
+		s.Fatalf("txn should have been in vars/fwdVars map already")
+	}
+	off := Ctxt.FixedFrameSize()
+	itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], s.txIntf)
+	s.nilCheck(itab)
+	itabidx := fnOffset + 2*int64(Widthptr) + 8 // offset of fun field in runtime.itab
+	itab = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.UintptrPtr, itabidx, itab)
+	codeptr := s.load(types.Types[TUINTPTR], itab)
+	rcvr := s.newValue1(ssa.OpIData, types.Types[TUINTPTR], s.txIntf)
+
+	// Set receiver for interface calls
+	addr := s.constOffPtrSP(s.f.Config.Types.UintptrPtr, off)
+	s.store(types.Types[TUINTPTR], addr, rcvr)
+	off += types.Types[TUINTPTR].Size()
+	slType := types.NewSlice(types.Types[TINTER])
+	s.store(slType, s.constOffPtrSP(types.NewPtr(slType), off), arg)
+	off += arg.Type.Size()
+
+	off = Rnd(off, int64(Widthreg))
+
+	call := s.newValue2(ssa.OpInterCall, types.TypeMem, codeptr, s.mem())
+	// Remember how much callee stack space we needed.
+	call.AuxInt = off
+	s.vars[&memVar] = call
+	return call, off
+}
+
+// txnLog issues a call to the tx logging function txn.Log
+// The args need to be converted to a slice of empty interfaces as
+// txn.Log() accepts variadic arg of type empty interface. See walk.go:walkcall()
+// function where this is originally done as part of AST manipulation.
+// txnLog implementation is inspired by (*state).rtcall() method
+func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
+	if !flag_txn {
+		panic("flag_txn is off, should not be creating ssa node for txn call")
+	}
+
+	// TODO: (mohitv) Using consts 0,1,2 for now
+	const0 := s.constInt64(types.Types[TINT64], 0)
+	const1 := s.constInt64(types.Types[TINT64], 1)
+	const2 := s.constInt64(types.Types[TINT64], 2)
+
+	intfType := types.Types[TINTER]
+	slType := types.NewSlice(types.Types[TINTER])
+	arrType := types.NewArray(types.Types[TINTER], 2)
+	intfPtrType := types.NewPtr(intfType)
+	byteptr := s.f.Config.Types.BytePtr
+
+	runtimeNewFn := sysfunc("newobject")
+
+	typeNameNode := typename(arrType)
+	sl := s.rtcall(runtimeNewFn, true, []*types.Type{types.NewPtr(arrType)}, s.expr(typeNameNode))
+	sl0 := sl[0]
+
+	// 0th arg
+	i0 := s.newValue2(ssa.OpIMake, types.Types[TINTER], s.expr(typename(left.Type)), left)
+	s.nilCheck(sl0)
+	p := s.newValue2(ssa.OpPtrIndex, intfPtrType, sl0, const0)
+	itab0 := s.newValue1(ssa.OpITab, byteptr, i0)
+	s.store(types.Types[TUINTPTR], p, itab0)
+	idata0 := s.newValue1(ssa.OpIData, byteptr, i0)
+	p = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, p)
+	s.store(byteptr, p, idata0)
+
+	// 1st arg needs to be converted to empty interface explicitly
+	rType := right.Type
+	typeNameNode = typename(rType)
+	var runtimeTypeConvFn *obj.LSym
+	switch {
+	case rType.Size() == 2 && rType.Align == 2:
+		runtimeTypeConvFn = sysfunc("convT2E16")
+	case rType.Size() == 4 && rType.Align == 4 && !types.Haspointers(rType):
+		runtimeTypeConvFn = sysfunc("convT2E32")
+	case rType.Size() == 8 && rType.Align == types.Types[TUINT64].Align && !types.Haspointers(rType):
+		runtimeTypeConvFn = sysfunc("convT2E64")
+	case rType.IsString():
+		runtimeTypeConvFn = sysfunc("convT2Estring")
+	case rType.IsSlice():
+		runtimeTypeConvFn = sysfunc("convT2Eslice")
+	case !types.Haspointers(rType):
+		runtimeTypeConvFn = sysfunc("convT2Enoptr")
+	default:
+		runtimeTypeConvFn = sysfunc("convT2E")
+	}
+
+	intf := s.rtcall(runtimeTypeConvFn, true, []*types.Type{intfType}, s.expr(typeNameNode), right)
+	i1 := intf[0]
+	s.nilCheck(sl0)
+	p = s.newValue2(ssa.OpPtrIndex, intfPtrType, sl0, const1)
+	itab1 := s.newValue1(ssa.OpITab, byteptr, i1)
+	s.store(types.Types[TUINTPTR], p, itab1)
+	idata1 := s.newValue1(ssa.OpIData, byteptr, i1)
+	p = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, p)
+	s.store(byteptr, p, idata1)
+	s.nilCheck(sl0)
+
+	// make slice of args
+	arg := s.newValue3(ssa.OpSliceMake, slType, sl0, const2, const2)
+
+	// set up call to Log method of transaction interface
+	txLog := typecheck(txLogFn.Left, Ecall) // txLog = txn.Log, not the function call
+	fnOffset := txLog.Xoffset
+	s.txnIntfCall(fnOffset, arg)
+	// Assumed no results
+	return nil
+}
+
 // do *left = right for type t.
 func (s *state) storeType(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	s.instrument(t, left, true)
-
+	if flag_txn && left.WithinTx && !s.isAllocatedOnStack(left) {
+		s.txnLog(left, right)
+		return
+	}
 	if skip == 0 && (!types.Haspointers(t) || ssa.IsStackAddr(left)) {
 		// Known to not have write barrier. Store the whole type.
 		s.vars[&memVar] = s.newValue3Apos(ssa.OpStore, types.TypeMem, t, left, right, s.mem(), leftIsStmt)
