@@ -92,7 +92,7 @@ func (p *noder) makeSrcPosBase(b0 *syntax.PosBase) *src.PosBase {
 			b1 = src.NewFileBase(fn, absFilename(fn))
 		} else if b0 == nil {
 			// injected code by tx changes
-			fn = "txn.go" // assign temporary file name to injected stmts
+			fn = "tx.go" // assign temporary file name to injected stmts
 			b1 = src.NewFileBase(fn, absFilename(fn))
 		} else {
 			// line directive base
@@ -906,6 +906,12 @@ func (p *noder) stmtFall(stmt syntax.Stmt, fallOK bool) *Node {
 			return nod(OEMPTY, nil, nil)
 		}
 		return liststmt(l)
+	case *syntax.TxBlockStmt:
+		l := p.txBlockStmt(stmt)
+		if len(l) == 0 {
+			panic("go-pmem noder.stmtFall(): txBlock can never have zero nodes")
+		}
+		return liststmt(l)
 	case *syntax.ExprStmt:
 		return p.wrapname(stmt, p.expr(stmt.X))
 	case *syntax.SendStmt:
@@ -1066,6 +1072,38 @@ func (p *noder) blockStmt(stmt *syntax.BlockStmt) []*Node {
 	p.openScope(stmt.Pos())
 	nodes := p.stmts(stmt.List)
 	p.closeScope(stmt.Rbrace)
+	return nodes
+}
+
+func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
+	var nodes []*Node
+	nodes = append(nodes, p.stmts(txB.Pre)...)
+	if txB.Logger == syntax.NullLog {
+		nodes = append(nodes, p.blockStmt(txB.B)...)
+		return nodes
+	}
+	// mark tx.Begin() call to be recognized later during buildssa phase
+	nodes[len(nodes)-1].SetInjectedTxStmt(true)
+	p.openScope(txB.B.Pos())
+	for _, s := range txB.B.List {
+		if _, ok := s.(*syntax.AssignStmt); ok {
+			n := p.stmt(s)
+			n.SetInjectedTxStmt(true)
+			nodes = append(nodes, n)
+		} else {
+			sList := []syntax.Stmt{s}
+			n := p.stmts(sList)
+			nodes = append(nodes, n...)
+		}
+	}
+	p.closeScope(txB.B.Rbrace)
+	nodes = append(nodes, p.stmts(txB.Post)...)
+	if txLogFn == nil || txReadLogFn == nil {
+		// Random function calls to populate transaction interface table
+		// This is used to get offsets of methods to call during buildssa phase
+		txLogFn = p.getNewNodeFromString("tx.Log(a)")
+		txReadLogFn = p.getNewNodeFromString("tx.ReadLog(a)")
+	}
 	return nodes
 }
 
@@ -1504,4 +1542,9 @@ func unparen(x *Node) *Node {
 		x = x.Left
 	}
 	return x
+}
+
+func (p *noder) getNewNodeFromString(s string) *Node {
+	st := syntax.ParseStmtFromScratch(s)
+	return p.stmt(st)
 }

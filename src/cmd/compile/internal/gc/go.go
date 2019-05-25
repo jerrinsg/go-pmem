@@ -128,6 +128,12 @@ var racepkg *types.Pkg // package runtime/race
 
 var msanpkg *types.Pkg // package runtime/msan
 
+var txnpkg *types.Pkg // transaction package
+
+var txLogFn *Node // used in gc/ssa.go to read offset of Log() call in txn interface
+
+var txReadLogFn *Node // used in gc/ssa.go to read offset of ReadLog() call in txn interface
+
 var unsafepkg *types.Pkg // package unsafe
 
 var trackpkg *types.Pkg // fake package for field tracking
