@@ -25,12 +25,11 @@ type parser struct {
 	errcnt int      // number of errors encountered
 	pragma Pragma   // pragma flags
 
-	fnest       int    // function nesting level (for error handling)
-	xnest       int    // expression nesting level (for complit ambiguity resolution)
-	indent      []byte // tracing support
-	inTxBlock   bool
-	txNeedToLog bool
-	logMode     LogMode
+	fnest     int    // function nesting level (for error handling)
+	xnest     int    // expression nesting level (for complit ambiguity resolution)
+	indent    []byte // tracing support
+	inTxBlock bool
+	logMode   LogMode
 }
 
 func (p *parser) init(file *PosBase, r io.Reader, errh ErrorHandler, pragh PragmaHandler, mode Mode) {
@@ -977,7 +976,7 @@ loop:
 
 		case _Lparen:
 			if p.inTxBlock {
-				p.syntaxError("unexpected function call within transaction")
+				p.syntaxError("go-pmem unexpected function call within transaction")
 			}
 			t := new(CallExpr)
 			t.pos = pos
@@ -1615,18 +1614,12 @@ func (p *parser) simpleStmt(lhs Expr, keyword token) SimpleStmt {
 		case _AssignOp:
 			// lhs op= rhs
 			op := p.op
-			if p.inTxBlock {
-				p.txNeedToLog = true
-			}
 			p.next()
 			return p.newAssignStmt(pos, op, lhs, p.expr())
 
 		case _IncOp:
 			// lhs++ or lhs--
 			op := p.op
-			if p.inTxBlock {
-				p.txNeedToLog = true
-			}
 			p.next()
 			return p.newAssignStmt(pos, op, lhs, ImplicitOne)
 
@@ -1655,12 +1648,6 @@ func (p *parser) simpleStmt(lhs Expr, keyword token) SimpleStmt {
 		var op Operator
 		if p.tok == _Define {
 			op = Def
-		} else { // p.tok = _Assign
-			if p.inTxBlock {
-				if _, ok := lhs.(*ListExpr); !ok { // lhs not a list expression
-					p.txNeedToLog = true
-				}
-			}
 		}
 		p.next()
 
@@ -2036,6 +2023,8 @@ func (p *parser) commClause() *CommClause {
 	return c
 }
 
+// ParseStmtFromScratch is used to get syntax tree node for arbitrary code
+// string. Used while injecting transaction logging statements
 func ParseStmtFromScratch(s string) Stmt {
 	var pTmp parser
 	src := "package p; func _() { " + s + "; }"
@@ -2046,36 +2035,10 @@ func ParseStmtFromScratch(s string) Stmt {
 	return f.DeclList[0].(*FuncDecl).Body.List[0]
 }
 
-func newLogTxStmt(v string) Stmt {
-	s := "tx.Log(" + v + ")"
-	return ParseStmtFromScratch(s)
-}
-
-func getVarNameFromLHS(e Expr) (s string) {
-	switch t := e.(type) {
-	case *Name:
-		s = t.Value
-	case *BasicLit:
-		s = t.Value
-	case *ParenExpr:
-		s = getVarNameFromLHS(t.X)
-	case *SelectorExpr:
-		s = getVarNameFromLHS(t.X) + "." + t.Sel.Value
-	case *IndexExpr:
-		s = getVarNameFromLHS(t.X) + "[" + getVarNameFromLHS(t.Index) + "]"
-	case *Operation:
-		if t.Op == Mul {
-			s = getVarNameFromLHS(t.X)
-		} else {
-			panic(fmt.Sprintf("injecting tx logging for type %T, op %T not supported", t, t.Op))
-		}
-	default:
-		panic(fmt.Sprintf("injecting tx logging for type %T not supported", t))
-	}
-	return s
-}
-
-func (p *parser) txBlock(declTx bool) (sList []Stmt) {
+func (p *parser) txBlockStmt(declTx bool) *TxBlockStmt {
+	t := new(TxBlockStmt)
+	t.pos = p.pos()
+	var sList []Stmt
 	p.next()
 	args, hasDots := p.argList()
 	if hasDots {
@@ -2093,49 +2056,51 @@ func (p *parser) txBlock(declTx bool) (sList []Stmt) {
 		case "\"undo\"":
 			p.logMode = UndoLog
 		case "\"redo\"":
-			// TODO: Remove this
-			p.syntaxError("redo logging in txn() not yet supported")
+			p.logMode = RedoLog
 		case "\"null\"":
-			p.logMode = NulllLog
+			p.logMode = NullLog
 		default:
-			// TODO: Remove this
+			// TODO: (mohitv) Remove this
 			p.syntaxError("custom logging in txn() not yet supported")
 		}
 	} else {
 		p.syntaxError("unexpected no. of args in function call to txn()")
 	}
+	t.Logger = p.logMode
 	var s string
-	if p.logMode == NulllLog {
-		// Ad fake initialization to avoid syntax error due to unused import
-		s = "var tx transaction.TX"
-		sList = append(sList, ParseStmtFromScratch(s))
-		s = "_ = tx"
-		sList = append(sList, ParseStmtFromScratch(s))
-		return
-	}
 
-	// TODO: Remove this
-	if p.logMode != UndoLog {
-		panic("Only undo/null logging supported. Error in setting log mode")
-	}
-
-	p.inTxBlock = true
 	if declTx {
 		s = "var tx transaction.TX"
 		sList = append(sList, ParseStmtFromScratch(s))
 	}
-	s = "tx = transaction.NewUndoTx()"
+	if p.logMode == NullLog {
+		// Add fake initialization to avoid syntax error due to unused import
+		s = "_ = tx"
+		sList = append(sList, ParseStmtFromScratch(s))
+		t.Pre = sList
+		t.B = p.blockStmt("")
+		return t
+	}
+
+	if p.logMode == UndoLog {
+		s = "tx = transaction.NewUndoTx()"
+	} else if p.logMode == RedoLog {
+		s = "tx = transaction.NewRedoTx()"
+	}
 	sList = append(sList, ParseStmtFromScratch(s))
 	s = "tx.Begin()"
 	sList = append(sList, ParseStmtFromScratch(s))
-	b := p.blockStmt("")
-	sList = append(sList, b.List...)
+	t.Pre = sList
+
+	p.inTxBlock = true
+	t.B = p.blockStmt("txn block")
 	p.inTxBlock = false
+
 	s = "tx.End()"
-	sList = append(sList, ParseStmtFromScratch(s))
+	t.Post = append(t.Post, ParseStmtFromScratch(s))
 	s = "transaction.Release(tx)"
-	sList = append(sList, ParseStmtFromScratch(s))
-	return sList
+	t.Post = append(t.Post, ParseStmtFromScratch(s))
+	return t
 }
 
 // Statement =
@@ -2222,7 +2187,7 @@ func (p *parser) stmtOrNil() Stmt {
 		s.Label = p.name()
 		return s
 	case _Txn:
-		panic("parser.stmtorNil() don't know how to handle txn keyword")
+		panic("go-pmem parser.stmtorNil() don't know how to handle txn keyword")
 	case _Return:
 		s := new(ReturnStmt)
 		s.pos = p.pos()
@@ -2252,24 +2217,13 @@ func (p *parser) stmtList() (l []Stmt) {
 			if p.mode&GenTxn == 0 {
 				p.syntaxError("txn() call not supported in this build mode, pass -txn while building")
 			}
-			l = append(l, p.txBlock(firstTxKey)...)
+			l = append(l, p.txBlockStmt(firstTxKey))
 			firstTxKey = false
+			continue
 		}
 		s := p.stmtOrNil()
 		if s == nil {
 			break
-		}
-		if p.txNeedToLog {
-			if a, ok := s.(*AssignStmt); ok {
-				v := getVarNameFromLHS(a.Lhs)
-				if _, ok := a.Lhs.(*Operation); !ok {
-					v = "&" + v
-				}
-				l = append(l, newLogTxStmt(v))
-			} else {
-				p.syntaxError("error injecting tx logging statement")
-			}
-			p.txNeedToLog = false
 		}
 		l = append(l, s)
 		// ";" is optional before "}"

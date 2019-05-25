@@ -23,7 +23,7 @@ const (
 type LogMode uint
 
 const (
-	NulllLog = iota
+	NullLog = iota
 	UndoLog
 	RedoLog
 	CustomLog

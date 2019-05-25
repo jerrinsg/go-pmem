@@ -336,6 +336,14 @@ type (
 		stmt
 	}
 
+	TxBlockStmt struct {
+		Pre    []Stmt
+		B      *BlockStmt
+		Logger LogMode
+		Post   []Stmt
+		stmt
+	}
+
 	ExprStmt struct {
 		X Expr
 		simpleStmt
