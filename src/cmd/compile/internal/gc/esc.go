@@ -901,7 +901,9 @@ opSwitch:
 			}
 			break
 		}
-
+		if flag_txn && n.IsInjectedTxStmt() {
+			addrescapesFromTxn(n.Left, e)
+		}
 		e.escassign(n.Left, n.Right, e.stepAssignWhere(nil, nil, "", n))
 
 	case OAS2: // x,y = a,b
@@ -2138,6 +2140,26 @@ recurse:
 	}
 
 	e.pdepth--
+}
+
+func addrescapesFromTxn(node *Node, e *EscState) {
+	n := node
+	if n.Esc == EscHeap {
+		// already moved to heap
+		return
+	}
+	switch n.Op {
+	case OIND, ODOTPTR:
+		addrescapesFromTxn(n.Left, e)
+	case ONAME:
+		moveToHeap(n)
+		escapeMsg := "used on lhs of assignment within txn() block"
+		e.escassignSinkWhy(node, node, escapeMsg)
+	case ODOT, OINDEX, OPAREN, OCONVNOP:
+		addrescapesFromTxn(n.Left, e)
+	default:
+		panic(fmt.Sprintf("force escape inside txn block, can't handle op %v", n.Op))
+	}
 }
 
 // addrescapes tags node n as having had its address taken
