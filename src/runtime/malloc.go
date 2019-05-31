@@ -912,7 +912,17 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 	}
 
 	if size == 0 {
-		return unsafe.Pointer(&zerobase)
+		if memtype == isPersistent {
+			// For a 0-byte allocation, volatile allocator always returns the
+			// address of a global variable 'zerobase'.
+			// But this is not possible in the case of persistent memory allocator
+			// because persistent global variables are not supported. Hence, the
+			// persistent memory allocator returns the address of a newly allocated
+			// region of size at least 1 byte.
+			size = 1
+		} else {
+			return unsafe.Pointer(&zerobase)
+		}
 	}
 
 	if debug.sbrk != 0 {
@@ -1018,8 +1028,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			// standalone escaping variables. On a json benchmark
 			// the allocator reduces number of allocations by ~12% and
 			// reduces heap size by ~20%.
-			// todo add persistent memory tiny allocation support
-			off := c.tinyoffset[isNotPersistent]
+			off := c.tinyoffset[memtype]
 			// Align tiny pointer for required (conservative) alignment.
 			if size&7 == 0 {
 				off = alignUp(off, 8)
@@ -1028,17 +1037,17 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			} else if size&1 == 0 {
 				off = alignUp(off, 2)
 			}
-			if off+size <= maxTinySize && c.tiny[isNotPersistent] != 0 {
+			if off+size <= maxTinySize && c.tiny[memtype] != 0 {
 				// The object fits into existing tiny block.
-				x = unsafe.Pointer(c.tiny[isNotPersistent] + off)
-				c.tinyoffset[isNotPersistent] = off + size
+				x = unsafe.Pointer(c.tiny[memtype] + off)
+				c.tinyoffset[memtype] = off + size
 				c.local_tinyallocs++
 				mp.mallocing = 0
 				releasem(mp)
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span = c.alloc[isNotPersistent][tinySpanClass]
+			span = c.alloc[memtype][tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(tinySpanClass, memtype)
@@ -1048,9 +1057,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			(*[2]uint64)(x)[1] = 0
 			// See if we need to replace the existing tiny block with the new one
 			// based on amount of remaining free space.
-			if size < c.tinyoffset[isNotPersistent] || c.tiny[isNotPersistent] == 0 {
-				c.tiny[isNotPersistent] = uintptr(x)
-				c.tinyoffset[isNotPersistent] = size
+			if size < c.tinyoffset[memtype] || c.tiny[memtype] == 0 {
+				c.tiny[memtype] = uintptr(x)
+				c.tinyoffset[memtype] = size
 			}
 			size = maxTinySize
 		} else {
