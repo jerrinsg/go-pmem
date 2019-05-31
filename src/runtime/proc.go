@@ -4312,7 +4312,9 @@ func (pp *p) destroy() {
 			mheap_.spanalloc.free(unsafe.Pointer(pp.mspancache.buf[i]))
 		}
 		pp.mspancache.len = 0
-		pp.pcache.flush(&mheap_.pages[isNotPersistent])
+		for _, memtype := range memTypes {
+			pp.pcache[memtype].flush(&mheap_.pages[memtype])
+		}
 	})
 	freemcache(pp.mcache)
 	pp.mcache = nil

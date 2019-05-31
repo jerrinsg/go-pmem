@@ -367,7 +367,7 @@ func ReadMemStatsSlow() (base, slow MemStats) {
 			slow.HeapReleased += uint64(pg) * pageSize
 		}
 		for _, p := range allp {
-			pg := sys.OnesCount64(p.pcache.scav)
+			pg := sys.OnesCount64(p.pcache[isNotPersistent].scav)
 			slow.HeapReleased += uint64(pg) * pageSize
 		}
 
@@ -943,7 +943,7 @@ func PageCachePagesLeaked() (leaked uintptr) {
 		// Since we're going past len(allp) we may see nil Ps.
 		// Just ignore them.
 		if p != nil {
-			leaked += uintptr(sys.OnesCount64(p.pcache.cache))
+			leaked += uintptr(sys.OnesCount64(p.pcache[isNotPersistent].cache))
 		}
 	}
 
