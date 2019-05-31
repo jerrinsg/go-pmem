@@ -300,6 +300,7 @@ func (p *ProfBuf) Close() {
 
 // ReadMemStatsSlow returns both the runtime-computed MemStats and
 // MemStats accumulated by scanning the heap.
+// TODO persistent memory stats are not accounted correctly here
 func ReadMemStatsSlow() (base, slow MemStats) {
 	stopTheWorld("ReadMemStatsSlow")
 
@@ -357,8 +358,8 @@ func ReadMemStatsSlow() (base, slow MemStats) {
 			slow.BySize[i].Frees = bySize[i].Frees
 		}
 
-		for i := mheap_.pages.start; i < mheap_.pages.end; i++ {
-			chunk := mheap_.pages.tryChunkOf(i)
+		for i := mheap_.pages[isNotPersistent].start; i < mheap_.pages[isNotPersistent].end; i++ {
+			chunk := mheap_.pages[isNotPersistent].tryChunkOf(i)
 			if chunk == nil {
 				continue
 			}
@@ -371,7 +372,7 @@ func ReadMemStatsSlow() (base, slow MemStats) {
 		}
 
 		// Unused space in the current arena also counts as released space.
-		slow.HeapReleased += uint64(mheap_.curArena.end - mheap_.curArena.base)
+		slow.HeapReleased += uint64(mheap_.curArena[isNotPersistent].end - mheap_.curArena[isNotPersistent].base)
 
 		getg().m.mallocing--
 	})
@@ -899,8 +900,8 @@ func CheckScavengedBitsCleared(mismatches []BitsMismatch) (n int, ok bool) {
 		// Lock so that we can safely access the bitmap.
 		lock(&mheap_.lock)
 	chunkLoop:
-		for i := mheap_.pages.start; i < mheap_.pages.end; i++ {
-			chunk := mheap_.pages.tryChunkOf(i)
+		for i := mheap_.pages[isNotPersistent].start; i < mheap_.pages[isNotPersistent].end; i++ {
+			chunk := mheap_.pages[isNotPersistent].tryChunkOf(i)
 			if chunk == nil {
 				continue
 			}

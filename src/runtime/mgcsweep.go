@@ -97,7 +97,7 @@ func (h *mheap) nextSpanForSweep() *mspan {
 	sg := h.sweepgen
 	for sc := sweep.centralIndex.load(); sc < numSweepClasses; sc++ {
 		spc, full := sc.split()
-		c := &h.central[spc].mcentral
+		c := &h.central[isNotPersistent][spc].mcentral
 		var s *mspan
 		if full {
 			s = c.fullUnswept(sg).pop()
@@ -137,10 +137,12 @@ func finishsweep_m() {
 	// so that we can catch unswept spans and reclaim blocks as
 	// soon as possible.
 	sg := mheap_.sweepgen
-	for i := range mheap_.central {
-		c := &mheap_.central[i].mcentral
-		c.partialUnswept(sg).reset()
-		c.fullUnswept(sg).reset()
+	for _, memtype := range memTypes {
+		for i := range mheap_.central[memtype] {
+			c := &mheap_.central[memtype][i].mcentral
+			c.partialUnswept(sg).reset()
+			c.fullUnswept(sg).reset()
+		}
 	}
 
 	// Sweeping is done, so if the scavenger isn't already awake,
@@ -253,7 +255,7 @@ func sweepone() uintptr {
 		// with scavenging work.
 		systemstack(func() {
 			lock(&mheap_.lock)
-			mheap_.pages.scavengeStartGen()
+			mheap_.pages[isNotPersistent].scavengeStartGen()
 			unlock(&mheap_.lock)
 		})
 		// Since we might sweep in an allocation path, it's not possible
@@ -518,9 +520,9 @@ func (s *mspan) sweep(preserve bool) bool {
 			}
 			// Return span back to the right mcentral list.
 			if uintptr(nalloc) == s.nelems {
-				mheap_.central[spc].mcentral.fullSwept(sweepgen).push(s)
+				mheap_.central[isNotPersistent][spc].mcentral.fullSwept(sweepgen).push(s)
 			} else {
-				mheap_.central[spc].mcentral.partialSwept(sweepgen).push(s)
+				mheap_.central[isNotPersistent][spc].mcentral.partialSwept(sweepgen).push(s)
 			}
 		}
 	} else if !preserve {
@@ -554,7 +556,7 @@ func (s *mspan) sweep(preserve bool) bool {
 		}
 
 		// Add a large span directly onto the full+swept list.
-		mheap_.central[spc].mcentral.fullSwept(sweepgen).push(s)
+		mheap_.central[isNotPersistent][spc].mcentral.fullSwept(sweepgen).push(s)
 	}
 	return false
 }

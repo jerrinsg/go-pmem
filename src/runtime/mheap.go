@@ -58,10 +58,10 @@ type mheap struct {
 	// lock must only be acquired on the system stack, otherwise a g
 	// could self-deadlock if its stack grows with the lock held.
 	lock      mutex
-	pages     pageAlloc // page allocation data structure
-	sweepgen  uint32    // sweep generation, see comment in mspan; written during STW
-	sweepdone uint32    // all spans are swept
-	sweepers  uint32    // number of active sweepone calls
+	pages     [maxMemTypes]pageAlloc // page allocation data structure
+	sweepgen  uint32                 // sweep generation, see comment in mspan; written during STW
+	sweepdone uint32                 // all spans are swept
+	sweepers  uint32                 // number of active sweepone calls
 
 	// allspans is a slice of all mspans ever created. Each mspan
 	// appears exactly once.
@@ -194,7 +194,7 @@ type mheap struct {
 
 	// curArena is the arena that the heap is currently growing
 	// into. This should always be physPageSize-aligned.
-	curArena struct {
+	curArena [maxMemTypes]struct {
 		base, end uintptr
 	}
 
@@ -205,7 +205,9 @@ type mheap struct {
 	// spaced CacheLinePadSize bytes apart, so that each mcentral.lock
 	// gets its own cache line.
 	// central is indexed by spanClass.
-	central [numSpanClasses]struct {
+	// central[0] stores the central free lists for volatile memory and
+	// central[1] stores the central free lists for persistent memory.
+	central [maxMemTypes][numSpanClasses]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}
@@ -715,12 +717,13 @@ func (h *mheap) init() {
 	h.spanalloc.zero = false
 
 	// h->mapcache needs no init
-
-	for i := range h.central {
-		h.central[i].mcentral.init(spanClass(i))
+	for _, memtype := range memTypes {
+		for i := range h.central[memtype] {
+			h.central[memtype][i].mcentral.init(spanClass(i))
+		}
+		h.pages[memtype].init(&h.lock, &memstats.gc_sys)
 	}
 
-	h.pages.init(&h.lock, &memstats.gc_sys)
 }
 
 // reclaim sweeps and reclaims at least npage pages into the heap.
@@ -1101,7 +1104,7 @@ func (h *mheap) allocSpan(npages uintptr, manual bool, spanclass spanClass, sysS
 		// If the cache is empty, refill it.
 		if c.empty() {
 			lock(&h.lock)
-			*c = h.pages.allocToCache()
+			*c = h.pages[isNotPersistent].allocToCache()
 			unlock(&h.lock)
 		}
 
@@ -1135,13 +1138,13 @@ func (h *mheap) allocSpan(npages uintptr, manual bool, spanclass spanClass, sysS
 
 	if base == 0 {
 		// Try to acquire a base address.
-		base, scav = h.pages.alloc(npages)
+		base, scav = h.pages[isNotPersistent].alloc(npages)
 		if base == 0 {
 			if !h.grow(npages) {
 				unlock(&h.lock)
 				return nil
 			}
-			base, scav = h.pages.alloc(npages)
+			base, scav = h.pages[isNotPersistent].alloc(npages)
 			if base == 0 {
 				throw("grew heap, but no adequate free space found")
 			}
@@ -1305,9 +1308,9 @@ func (h *mheap) grow(npage uintptr) bool {
 	totalGrowth := uintptr(0)
 	// This may overflow because ask could be very large
 	// and is otherwise unrelated to h.curArena.base.
-	end := h.curArena.base + ask
+	end := h.curArena[isNotPersistent].base + ask
 	nBase := alignUp(end, physPageSize)
-	if nBase > h.curArena.end || /* overflow */ end < h.curArena.base {
+	if nBase > h.curArena[isNotPersistent].end || /* overflow */ end < h.curArena[isNotPersistent].base {
 		// Not enough room in the current arena. Allocate more
 		// arena space. This may not be contiguous with the
 		// current arena, so we have to request the full ask.
@@ -1317,21 +1320,21 @@ func (h *mheap) grow(npage uintptr) bool {
 			return false
 		}
 
-		if uintptr(av) == h.curArena.end {
+		if uintptr(av) == h.curArena[isNotPersistent].end {
 			// The new space is contiguous with the old
 			// space, so just extend the current space.
-			h.curArena.end = uintptr(av) + asize
+			h.curArena[isNotPersistent].end = uintptr(av) + asize
 		} else {
 			// The new space is discontiguous. Track what
 			// remains of the current space and switch to
 			// the new space. This should be rare.
-			if size := h.curArena.end - h.curArena.base; size != 0 {
-				h.pages.grow(h.curArena.base, size)
+			if size := h.curArena[isNotPersistent].end - h.curArena[isNotPersistent].base; size != 0 {
+				h.pages[isNotPersistent].grow(h.curArena[isNotPersistent].base, size)
 				totalGrowth += size
 			}
 			// Switch to the new space.
-			h.curArena.base = uintptr(av)
-			h.curArena.end = uintptr(av) + asize
+			h.curArena[isNotPersistent].base = uintptr(av)
+			h.curArena[isNotPersistent].end = uintptr(av) + asize
 		}
 
 		// The memory just allocated counts as both released
@@ -1347,13 +1350,13 @@ func (h *mheap) grow(npage uintptr) bool {
 		// We know this won't overflow, because sysAlloc returned
 		// a valid region starting at h.curArena.base which is at
 		// least ask bytes in size.
-		nBase = alignUp(h.curArena.base+ask, physPageSize)
+		nBase = alignUp(h.curArena[isNotPersistent].base+ask, physPageSize)
 	}
 
 	// Grow into the current arena.
-	v := h.curArena.base
-	h.curArena.base = nBase
-	h.pages.grow(v, nBase-v)
+	v := h.curArena[isNotPersistent].base
+	h.curArena[isNotPersistent].base = nBase
+	h.pages[isNotPersistent].grow(v, nBase-v)
 	totalGrowth += nBase - v
 
 	// We just caused a heap growth, so scavenge down what will soon be used.
@@ -1365,7 +1368,7 @@ func (h *mheap) grow(npage uintptr) bool {
 		if overage := uintptr(retained + uint64(totalGrowth) - h.scavengeGoal); todo > overage {
 			todo = overage
 		}
-		h.pages.scavenge(todo, false)
+		h.pages[isNotPersistent].scavenge(todo, false)
 	}
 	return true
 }
@@ -1442,7 +1445,7 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool) {
 	}
 
 	// Mark the space as free.
-	h.pages.free(s.base(), s.npages)
+	h.pages[isNotPersistent].free(s.base(), s.npages)
 
 	// Free the span structure. We no longer have a use for it.
 	s.state.set(mSpanDead)
@@ -1461,9 +1464,9 @@ func (h *mheap) scavengeAll() {
 	lock(&h.lock)
 	// Start a new scavenge generation so we have a chance to walk
 	// over the whole heap.
-	h.pages.scavengeStartGen()
-	released := h.pages.scavenge(^uintptr(0), false)
-	gen := h.pages.scav.gen
+	h.pages[isNotPersistent].scavengeStartGen()
+	released := h.pages[isNotPersistent].scavenge(^uintptr(0), false)
+	gen := h.pages[isNotPersistent].scav.gen
 	unlock(&h.lock)
 	gp.m.mallocing--
 

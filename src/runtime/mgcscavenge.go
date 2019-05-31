@@ -301,8 +301,8 @@ func bgscavenge(c chan int) {
 
 			// Scavenge one page, and measure the amount of time spent scavenging.
 			start := nanotime()
-			released = mheap_.pages.scavenge(physPageSize, true)
-			mheap_.pages.scav.released += released
+			released = mheap_.pages[isNotPersistent].scavenge(physPageSize, true)
+			mheap_.pages[isNotPersistent].scav.released += released
 			crit = float64(nanotime() - start)
 
 			unlock(&mheap_.lock)
