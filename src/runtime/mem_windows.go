@@ -111,7 +111,7 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 	return unsafe.Pointer(stdcall4(_VirtualAlloc, 0, n, _MEM_RESERVE, _PAGE_READWRITE))
 }
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	mSysStatInc(sysStat, n)
 	p := stdcall4(_VirtualAlloc, uintptr(v), n, _MEM_COMMIT, _PAGE_READWRITE)
 	if p != uintptr(v) {

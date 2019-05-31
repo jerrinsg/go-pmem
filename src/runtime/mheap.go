@@ -1255,8 +1255,7 @@ HaveSpan:
 // persistent memory or volatile memory.
 func (h *mheap) grow(npage uintptr, memtype int) bool {
 	ask := npage << _PageShift
-	// todo add persistent memory support
-	v, size := h.sysAlloc(ask)
+	v, size := h.sysAlloc(ask, memtype)
 	if v == nil {
 		print("runtime: out of memory: cannot allocate ", ask, "-byte block (", memstats.heap_sys, " in use)\n")
 		return false

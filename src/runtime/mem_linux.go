@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	_EACCES = 13
-	_EINVAL = 22
+	_EACCES  = 13
+	_EINVAL  = 22
+	_O_RDWR  = 0x2
+	_O_CREAT = 0x40
 )
 
 // Don't split the stack as this method may be invoked without a valid G, which
@@ -162,10 +164,20 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 	return p
 }
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	mSysStatInc(sysStat, n)
 
-	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)
+	var p unsafe.Pointer
+	var err int
+
+	if memtype == isPersistent {
+		p, pmemInfo.isPmem, err = mapFile(pmemInfo.fname, int(n), fileCreate,
+			_DEFAULT_FMODE, pmemInfo.nextMapOffset, v)
+	} else {
+		mapFlags := int32(_MAP_ANON | _MAP_FIXED | _MAP_PRIVATE)
+		p, err = mmap(v, n, _PROT_READ|_PROT_WRITE, mapFlags, -1, 0)
+	}
+
 	if err == _ENOMEM {
 		throw("runtime: out of memory")
 	}
