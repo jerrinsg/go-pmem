@@ -868,7 +868,7 @@ func nextFreeFast(s *mspan) gclinkptr {
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
 func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bool) {
-	s = c.alloc[spc]
+	s = c.alloc[isNotPersistent][spc]
 	shouldhelpgc = false
 	freeIndex := s.nextFreeIndex()
 	if freeIndex == s.nelems {
@@ -879,7 +879,7 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 		}
 		c.refill(spc)
 		shouldhelpgc = true
-		s = c.alloc[spc]
+		s = c.alloc[isNotPersistent][spc]
 
 		freeIndex = s.nextFreeIndex()
 	}
@@ -1012,7 +1012,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			// standalone escaping variables. On a json benchmark
 			// the allocator reduces number of allocations by ~12% and
 			// reduces heap size by ~20%.
-			off := c.tinyoffset
+			off := c.tinyoffset[isNotPersistent]
 			// Align tiny pointer for required (conservative) alignment.
 			if size&7 == 0 {
 				off = alignUp(off, 8)
@@ -1021,17 +1021,17 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			} else if size&1 == 0 {
 				off = alignUp(off, 2)
 			}
-			if off+size <= maxTinySize && c.tiny != 0 {
+			if off+size <= maxTinySize && c.tiny[isNotPersistent] != 0 {
 				// The object fits into existing tiny block.
-				x = unsafe.Pointer(c.tiny + off)
-				c.tinyoffset = off + size
+				x = unsafe.Pointer(c.tiny[isNotPersistent] + off)
+				c.tinyoffset[isNotPersistent] = off + size
 				c.local_tinyallocs++
 				mp.mallocing = 0
 				releasem(mp)
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span = c.alloc[tinySpanClass]
+			span = c.alloc[isNotPersistent][tinySpanClass]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(tinySpanClass)
@@ -1041,9 +1041,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			(*[2]uint64)(x)[1] = 0
 			// See if we need to replace the existing tiny block with the new one
 			// based on amount of remaining free space.
-			if size < c.tinyoffset || c.tiny == 0 {
-				c.tiny = uintptr(x)
-				c.tinyoffset = size
+			if size < c.tinyoffset[isNotPersistent] || c.tiny[isNotPersistent] == 0 {
+				c.tiny[isNotPersistent] = uintptr(x)
+				c.tinyoffset[isNotPersistent] = size
 			}
 			size = maxTinySize
 		} else {
@@ -1055,7 +1055,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span = c.alloc[spc]
+			span = c.alloc[isNotPersistent][spc]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(spc)

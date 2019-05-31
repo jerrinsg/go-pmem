@@ -31,13 +31,19 @@ type mcache struct {
 	// tiny is a heap pointer. Since mcache is in non-GC'd memory,
 	// we handle it by clearing it in releaseAll during mark
 	// termination.
-	tiny             uintptr
-	tinyoffset       uintptr
+	// tiny[0] is the heap pointer for volatile memory and tiny[1] is the heap
+	// pointer for persistent memory.
+	tiny [maxMemTypes]uintptr
+	// tinyoffset[0] is the tiny offset for volatile memory and tinyoffset[1] is
+	// the tiny offset for persistent memory.
+	tinyoffset       [maxMemTypes]uintptr
 	local_tinyallocs uintptr // number of tiny allocs not counted in other stats
 
 	// The rest is not accessed on every malloc.
 
-	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
+	// alloc[0] is the cache of spans for volatile memory and alloc[1] is the
+	// cache of spans for persistent memory.
+	alloc [maxMemTypes][numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
 	stackcache [_NumStackOrders]stackfreelist
 
@@ -90,8 +96,10 @@ func allocmcache() *mcache {
 		c.flushGen = mheap_.sweepgen
 		unlock(&mheap_.lock)
 	})
-	for i := range c.alloc {
-		c.alloc[i] = &emptymspan
+	for _, memtype := range memTypes {
+		for i := range c.alloc[memtype] {
+			c.alloc[memtype][i] = &emptymspan // clear span entry in mcache
+		}
 	}
 	c.next_sample = nextSample()
 	return c
@@ -121,7 +129,7 @@ func freemcache(c *mcache) {
 // c could change.
 func (c *mcache) refill(spc spanClass) {
 	// Return the current cached span to the central lists.
-	s := c.alloc[spc]
+	s := c.alloc[isNotPersistent][spc]
 
 	if uintptr(s.allocCount) != s.nelems {
 		throw("refill of span with free space remaining")
@@ -148,20 +156,22 @@ func (c *mcache) refill(spc spanClass) {
 	// sweeping in the next sweep phase.
 	s.sweepgen = mheap_.sweepgen + 3
 
-	c.alloc[spc] = s
+	c.alloc[isNotPersistent][spc] = s
 }
 
 func (c *mcache) releaseAll() {
-	for i := range c.alloc {
-		s := c.alloc[i]
-		if s != &emptymspan {
-			mheap_.central[i].mcentral.uncacheSpan(s)
-			c.alloc[i] = &emptymspan
+	for _, memtype := range memTypes {
+		for i := range c.alloc[memtype] {
+			s := c.alloc[memtype][i]
+			if s != &emptymspan {
+				mheap_.central[i].mcentral.uncacheSpan(s)
+				c.alloc[memtype][i] = &emptymspan
+			}
 		}
+		// Clear tinyalloc pool.
+		c.tiny[memtype] = 0
+		c.tinyoffset[memtype] = 0
 	}
-	// Clear tinyalloc pool.
-	c.tiny = 0
-	c.tinyoffset = 0
 }
 
 // prepareForSweep flushes c if the system has entered a new sweep phase
