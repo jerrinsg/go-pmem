@@ -503,6 +503,8 @@ func readGCStats_m(pauses *[]uint64) {
 	*pauses = p[:n+n+3]
 }
 
+// stats are currently supported only for volatile memory.
+// todo support stats for persistent memory
 //go:nowritebarrier
 func updatememstats() {
 	memstats.mcache_inuse = uint64(mheap_.cachealloc.inuse)
@@ -539,10 +541,10 @@ func updatememstats() {
 	// because the world is stopped.
 	var smallFree, totalAlloc, totalFree uint64
 	// Collect per-spanclass stats.
-	for spc := range mheap_.central {
+	for spc := range mheap_.central[isNotPersistent] {
 		// The mcaches are now empty, so mcentral stats are
 		// up-to-date.
-		c := &mheap_.central[spc].mcentral
+		c := &mheap_.central[isNotPersistent][spc].mcentral
 		memstats.nmalloc += c.nmalloc
 		i := spanClass(spc).sizeclass()
 		memstats.by_size[i].nmalloc += c.nmalloc
