@@ -15,7 +15,7 @@ import (
 //go:nosplit
 func sysAlloc(n uintptr, sysStat *uint64) unsafe.Pointer {
 	p := sysReserve(nil, n)
-	sysMap(p, n, sysStat)
+	sysMap(p, n, sysStat, isNotPersistent)
 	return p
 }
 
@@ -80,6 +80,6 @@ func growMemory(pages int32) int32
 // This allows the front-end to replace the old DataView object with a new one.
 func resetMemoryDataView()
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	mSysStatInc(sysStat, n)
 }

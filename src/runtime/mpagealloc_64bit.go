@@ -174,7 +174,8 @@ func (s *pageAlloc) sysGrow(base, limit uintptr) {
 		}
 
 		// Map and commit need.
-		sysMap(unsafe.Pointer(need.base.addr()), need.size(), s.sysStat)
+		// TODO jerrin
+		sysMap(unsafe.Pointer(need.base.addr()), need.size(), s.sysStat, isNotPersistent)
 		sysUsed(unsafe.Pointer(need.base.addr()), need.size())
 	}
 }

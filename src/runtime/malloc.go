@@ -628,14 +628,16 @@ func mallocinit() {
 // be transitioned to Ready before use.
 //
 // h must be locked.
-func (h *mheap) sysAlloc(n uintptr) (v unsafe.Pointer, size uintptr) {
+func (h *mheap) sysAlloc(n uintptr, memtype int) (v unsafe.Pointer, size uintptr) {
 	n = alignUp(n, heapArenaBytes)
 
 	// First, try the arena pre-reservation.
-	v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys)
-	if v != nil {
-		size = n
-		goto mapped
+	if memtype == isNotPersistent { // only applicable for volatile memory
+		v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys)
+		if v != nil {
+			size = n
+			goto mapped
+		}
 	}
 
 	// Try to grow the heap at a hint address.
@@ -726,10 +728,16 @@ func (h *mheap) sysAlloc(n uintptr) (v unsafe.Pointer, size uintptr) {
 	}
 
 	// Transition from Reserved to Prepared.
-	sysMap(v, size, &memstats.heap_sys)
+	sysMap(v, size, &memstats.heap_sys, memtype)
 
 mapped:
 	// Create arena metadata.
+	h.createArenaMetadata(v, size)
+
+	return
+}
+
+func (h *mheap) createArenaMetadata(v unsafe.Pointer, size uintptr) {
 	for ri := arenaIndex(uintptr(v)); ri <= arenaIndex(uintptr(v)+size-1); ri++ {
 		l2 := h.arenas[ri.l1()]
 		if l2 == nil {
@@ -785,8 +793,6 @@ mapped:
 	if raceenabled {
 		racemapshadow(v, size)
 	}
-
-	return
 }
 
 // sysReserveAligned is like sysReserve, but the returned pointer is
@@ -1071,7 +1077,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span = c.alloc[isNotPersistent][spc]
+			span = c.alloc[memtype][spc]
 			v := nextFreeFast(span)
 			if v == 0 {
 				v, span, shouldhelpgc = c.nextFree(spc, memtype)
@@ -1460,7 +1466,7 @@ func (l *linearAlloc) alloc(size, align uintptr, sysStat *uint64) unsafe.Pointer
 	l.next = p + size
 	if pEnd := alignUp(l.next-1, physPageSize); pEnd > l.mapped {
 		// Transition from Reserved to Prepared to Ready.
-		sysMap(unsafe.Pointer(l.mapped), pEnd-l.mapped, sysStat)
+		sysMap(unsafe.Pointer(l.mapped), pEnd-l.mapped, sysStat, isNotPersistent)
 		sysUsed(unsafe.Pointer(l.mapped), pEnd-l.mapped)
 		l.mapped = pEnd
 	}

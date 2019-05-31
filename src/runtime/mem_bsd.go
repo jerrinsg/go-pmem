@@ -65,7 +65,9 @@ func sysReserve(v unsafe.Pointer, n uintptr) unsafe.Pointer {
 const _sunosEAGAIN = 11
 const _ENOMEM = 12
 
-func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64) {
+// memtype specifies if memory should be allocated in persistent memory or
+// volatile memory. Currently unsupported.
+func sysMap(v unsafe.Pointer, n uintptr, sysStat *uint64, memtype int) {
 	mSysStatInc(sysStat, n)
 
 	p, err := mmap(v, n, _PROT_READ|_PROT_WRITE, _MAP_ANON|_MAP_FIXED|_MAP_PRIVATE, -1, 0)
