@@ -29,13 +29,17 @@ const minPhysPageSize = 4096
 //
 //go:notinheap
 type mheap struct {
-	lock      mutex
-	free      mTreap    // free and non-scavenged spans
-	scav      mTreap    // free and scavenged spans
-	busy      mSpanList // busy list of spans
-	sweepgen  uint32    // sweep generation, see comment in mspan
-	sweepdone uint32    // all spans are swept
-	sweepers  uint32    // number of active sweepone calls
+	lock mutex
+	// The data members below have been extended to be an array of length 2,
+	// where index 0 and index 1 holds the metadata corresponding to volatile
+	// memory and persistent memory respectively.
+	free [maxMemTypes]mTreap    // free and non-scavenged spans
+	scav [maxMemTypes]mTreap    // free and scavenged spans
+	busy [maxMemTypes]mSpanList // busy list of spans
+
+	sweepgen  uint32 // sweep generation, see comment in mspan
+	sweepdone uint32 // all spans are swept
+	sweepers  uint32 // number of active sweepone calls
 
 	// allspans is a slice of all mspans ever created. Each mspan
 	// appears exactly once.
@@ -140,7 +144,9 @@ type mheap struct {
 	// spaced CacheLinePadSize bytes apart, so that each MCentral.lock
 	// gets its own cache line.
 	// central is indexed by spanClass.
-	central [numSpanClasses]struct {
+	// central[0] stores the central free lists for volatile memory and
+	// central[1] stores the central free lists for persistent memory.
+	central [maxMemTypes][numSpanClasses]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}
@@ -610,9 +616,11 @@ func (h *mheap) init() {
 	h.spanalloc.zero = false
 
 	// h->mapcache needs no init
-	h.busy.init()
-	for i := range h.central {
-		h.central[i].mcentral.init(spanClass(i))
+	for _, memtype := range memTypes {
+		h.busy[memtype].init()
+		for i := range h.central[memtype] {
+			h.central[memtype][i].mcentral.init(spanClass(i))
+		}
 	}
 }
 
@@ -653,7 +661,7 @@ retry:
 // Sweeps and reclaims at least npage pages into heap.
 // Called before allocating npage pages.
 func (h *mheap) reclaim(npage uintptr) {
-	if h.reclaimList(&h.busy, npage) != 0 {
+	if h.reclaimList(&h.busy[isNotPersistent], npage) != 0 {
 		return // Bingo!
 	}
 
@@ -740,7 +748,7 @@ func (h *mheap) alloc_m(npage uintptr, spanclass spanClass, large bool) *mspan {
 			mheap_.nlargealloc++
 			atomic.Xadd64(&memstats.heap_live, int64(npage<<_PageShift))
 			// Swept spans are at the end of lists.
-			h.busy.insertBack(s)
+			h.busy[isNotPersistent].insertBack(s)
 		}
 	}
 	// heap_scan and heap_live were updated.
@@ -855,11 +863,11 @@ func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64) *mspan {
 
 	// First, attempt to allocate from free spans, then from
 	// scavenged spans, looking for best fit in each.
-	s = h.free.remove(npage)
+	s = h.free[isNotPersistent].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
-	s = h.scav.remove(npage)
+	s = h.scav[isNotPersistent].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
@@ -867,11 +875,11 @@ func (h *mheap) allocSpanLocked(npage uintptr, stat *uint64) *mspan {
 	if !h.grow(npage) {
 		return nil
 	}
-	s = h.free.remove(npage)
+	s = h.free[isNotPersistent].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
-	s = h.scav.remove(npage)
+	s = h.scav[isNotPersistent].remove(npage)
 	if s != nil {
 		goto HaveSpan
 	}
@@ -1042,7 +1050,7 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 	}
 	s.state = mSpanFree
 	if s.inList() {
-		h.busy.remove(s)
+		h.busy[isNotPersistent].remove(s)
 	}
 
 	// Stamp newly unused spans. The scavenger will use that
@@ -1067,9 +1075,9 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 		// The size is potentially changing so the treap needs to delete adjacent nodes and
 		// insert back as a combined node.
 		if !before.scavenged {
-			h.free.removeSpan(before)
+			h.free[isNotPersistent].removeSpan(before)
 		} else {
-			h.scav.removeSpan(before)
+			h.scav[isNotPersistent].removeSpan(before)
 			needsScavenge = true
 			prescavenged += before.released()
 		}
@@ -1083,9 +1091,9 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 		s.needzero |= after.needzero
 		h.setSpan(s.base()+s.npages*pageSize-1, s)
 		if !after.scavenged {
-			h.free.removeSpan(after)
+			h.free[isNotPersistent].removeSpan(after)
 		} else {
-			h.scav.removeSpan(after)
+			h.scav[isNotPersistent].removeSpan(after)
 			needsScavenge = true
 			prescavenged += after.released()
 		}
@@ -1110,18 +1118,19 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool, unusedsince i
 
 	// Insert s into the appropriate treap.
 	if s.scavenged {
-		h.scav.insert(s)
+		h.scav[isNotPersistent].insert(s)
 	} else {
-		h.free.insert(s)
+		h.free[isNotPersistent].insert(s)
 	}
 }
 
 // scavengeLargest scavenges nbytes worth of spans in unscav
 // starting from the largest span and working down. It then takes those spans
 // and places them in scav. h must be locked.
+// Heap scavenging currently supported only for volatile memory
 func (h *mheap) scavengeLargest(nbytes uintptr) {
 	// Find the largest child.
-	t := h.free.treap
+	t := h.free[isNotPersistent].treap
 	if t == nil {
 		return
 	}
@@ -1145,13 +1154,13 @@ func (h *mheap) scavengeLargest(nbytes uintptr) {
 			//
 			// This check also preserves the invariant that spans that have
 			// `scavenged` set are only ever in the `scav` treap, and
-			// those which have it unset are only in the `free` treap. 
+			// those which have it unset are only in the `free` treap.
 			return
 		}
 		prev := t.pred()
-		h.free.removeNode(t)
+		h.free[isNotPersistent].removeNode(t)
 		t = prev
-		h.scav.insert(s)
+		h.scav[isNotPersistent].insert(s)
 		released += r
 	}
 }
@@ -1161,7 +1170,7 @@ func (h *mheap) scavengeLargest(nbytes uintptr) {
 // unscav and adds it into scav before continuing. h must be locked.
 func (h *mheap) scavengeAll(now, limit uint64) uintptr {
 	// Compute the left-most child in unscav to start iteration from.
-	t := h.free.treap
+	t := h.free[isNotPersistent].treap
 	if t == nil {
 		return 0
 	}
@@ -1174,14 +1183,14 @@ func (h *mheap) scavengeAll(now, limit uint64) uintptr {
 	for t != nil {
 		s := t.spanKey
 		next := t.succ()
-		if (now-uint64(s.unusedsince)) > limit {
+		if (now - uint64(s.unusedsince)) > limit {
 			r := s.scavenge()
 			if r != 0 {
 				// If we ended up scavenging s, then remove it from unscav
 				// and add it to scav. This is safe to do since we've already
 				// moved to t's successor.
-				h.free.removeNode(t)
-				h.scav.insert(s)
+				h.free[isNotPersistent].removeNode(t)
+				h.scav[isNotPersistent].insert(s)
 				released += r
 			}
 		}
@@ -1192,6 +1201,7 @@ func (h *mheap) scavengeAll(now, limit uint64) uintptr {
 	return released
 }
 
+// Function to release memory back to OS. Applicable only to volatile memory.
 func (h *mheap) scavenge(k int32, now, limit uint64) {
 	// Disallow malloc or panic while holding the heap lock. We do
 	// this here because this is an non-mallocgc entry-point to

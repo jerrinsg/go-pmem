@@ -140,7 +140,7 @@ func (c *mcache) refill(spc spanClass) {
 	}
 
 	// Get a new cached span from the central lists.
-	s = mheap_.central[spc].mcentral.cacheSpan()
+	s = mheap_.central[isNotPersistent][spc].mcentral.cacheSpan()
 	if s == nil {
 		throw("out of memory")
 	}
@@ -161,7 +161,7 @@ func (c *mcache) releaseAll() {
 		for i := range c.alloc[memtype] {
 			s := c.alloc[memtype][i]
 			if s != &emptymspan {
-				mheap_.central[i].mcentral.uncacheSpan(s)
+				mheap_.central[isNotPersistent][i].mcentral.uncacheSpan(s)
 				c.alloc[memtype][i] = &emptymspan
 			}
 		}
