@@ -1331,12 +1331,17 @@ func gcmarknewobject(obj, size, scanSize uintptr) {
 func gcMarkTinyAllocs() {
 	for _, p := range allp {
 		c := p.mcache
-		if c == nil || c.tiny == 0 {
+		if c == nil {
 			continue
 		}
-		_, span, objIndex := findObject(c.tiny, 0, 0)
-		gcw := &p.gcw
-		greyobject(c.tiny, 0, 0, span, gcw, objIndex)
+		for _, memtype := range memTypes {
+			if c.tiny[memtype] == 0 {
+				continue
+			}
+			_, span, objIndex := findObject(c.tiny[memtype], 0, 0)
+			gcw := &p.gcw
+			greyobject(c.tiny[memtype], 0, 0, span, gcw, objIndex)
+		}
 	}
 }
 
