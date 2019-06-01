@@ -18,3 +18,12 @@ func ftruncate(fd, len uintptr) int32 {
 	return -1
 }
 
+func fstat(fd, stat uintptr) int32 {
+	// todo
+	return -1
+}
+
+func readlink(path, buf, len uintptr) int32 {
+	// todo
+	return -1
+}
