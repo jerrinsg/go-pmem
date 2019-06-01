@@ -18,7 +18,3 @@ func ftruncate(fd, len uintptr) int32 {
 	return -1
 }
 
-func fallocate(fd, mode, offset, len uintptr) int32 {
-	// todo
-	return -1
-}
