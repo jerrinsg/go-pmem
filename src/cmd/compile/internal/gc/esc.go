@@ -902,7 +902,8 @@ opSwitch:
 			break
 		}
 		if flag_txn && n.IsInjectedTxStmt() {
-			addrescapesFromTxn(n.Left, e)
+			addrescapesFromTxn(n.Left, e, "used on lhs of assignment within txn() block")
+			addrescapesFromTxn(n.Right, e, "used on rhs of assignment within txn() block")
 		}
 		e.escassign(n.Left, n.Right, e.stepAssignWhere(nil, nil, "", n))
 
@@ -2142,23 +2143,36 @@ recurse:
 	e.pdepth--
 }
 
-func addrescapesFromTxn(node *Node, e *EscState) {
-	n := node
+func addrescapesFromTxn(n *Node, e *EscState, reason string) {
 	if n.Esc == EscHeap {
 		// already moved to heap
 		return
 	}
 	switch n.Op {
-	case OIND, ODOTPTR:
-		addrescapesFromTxn(n.Left, e)
+	case OIND, ODOTPTR, ODOT, OPAREN:
+		addrescapesFromTxn(n.Left, e, reason)
 	case ONAME:
 		moveToHeap(n)
-		escapeMsg := "used on lhs of assignment within txn() block"
-		e.escassignSinkWhy(node, node, escapeMsg)
-	case ODOT, OINDEX, OPAREN, OCONVNOP:
-		addrescapesFromTxn(n.Left, e)
+		e.escassignSinkWhy(n, n, reason)
+	case OINDEX:
+		addrescapesFromTxn(n.Left, e, reason)
+		addrescapesFromTxn(n.Right, e, reason)
+	case OLITERAL, OSTRUCTLIT, OARRAYLIT, OSLICELIT, OPTRLIT:
+		// do nothing
+	// cases below can be on rhs of assignment stmts
+	case OSLICE, OSLICEARR, OSLICESTR:
+		addrescapesFromTxn(n.Left, e, reason)
+	// binary Ops
+	case OLT, OEQ, ONE, OLE, OGE, OGT, OADD, OADDSTR, OSUB, OMUL, ODIV, OMOD,
+		OAND, OOR, OXOR, OLSH, ORSH, OANDAND, OOROR, OCOMPLEX:
+		addrescapesFromTxn(n.Left, e, reason)
+		addrescapesFromTxn(n.Right, e, reason)
+	// unary Ops
+	case OMINUS, ONOT, OCOM, OIMAG, OREAL, OPLUS, OADDR:
+		addrescapesFromTxn(n.Left, e, reason)
 	default:
-		panic(fmt.Sprintf("force escape inside txn block, can't handle op %v", n.Op))
+		panic(fmt.Sprintf("force escape inside txn block, can't handle op %v",
+			n.Op, "for node %v", n))
 	}
 }
 

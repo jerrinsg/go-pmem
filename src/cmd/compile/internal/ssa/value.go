@@ -54,7 +54,8 @@ type Value struct {
 	// nor a slot on Go stack, and the generation of this value is delayed to its use time.
 	OnWasmStack bool
 
-	WithinTx bool
+	StoreWithinTx bool
+	LoadWithinTx  bool
 
 	// Storage for the first three args
 	argstorage [3]*Value

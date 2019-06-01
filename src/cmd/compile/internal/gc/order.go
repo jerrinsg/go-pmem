@@ -104,6 +104,9 @@ func (o *Order) newTemp(t *types.Type, clear bool) *Node {
 func (o *Order) copyExpr(n *Node, t *types.Type, clear bool) *Node {
 	v := o.newTemp(t, clear)
 	a := nod(OAS, v, n)
+	if flag_txn && n.IsInjectedTxReadLog() {
+		a.SetInjectedTxStmt(true)
+	}
 	a = typecheck(a, Etop)
 	o.out = append(o.out, a)
 	return v
@@ -557,12 +560,22 @@ func (o *Order) stmt(n *Node) {
 		o.out = append(o.out, n)
 
 	case OAS:
+		// Mark rhs node of assignment stmt so that all the intermediate
+		// OAS statements generated can be marked for tracking as well
+		if flag_txn && n.IsInjectedTxStmt() {
+			n.Right.SetInjectedTxReadLog(true)
+		}
 		t := o.markTemp()
 		n.Left = o.expr(n.Left, nil)
 		n.Right = o.expr(n.Right, n.Left)
 		o.mapAssign(n)
 		o.cleanTemp(t)
 
+		// reset flag on rhs node of assignment stmt which was set before.
+		// This will be marked correctly during buildssa in ssa.go
+		if flag_txn && n.IsInjectedTxStmt() {
+			n.Right.SetInjectedTxReadLog(false)
+		}
 	case OAS2,
 		OCLOSE,
 		OCOPY,

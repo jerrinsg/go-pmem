@@ -726,6 +726,9 @@ func (s *state) instrument(t *types.Type, addr *ssa.Value, wr bool) {
 }
 
 func (s *state) load(t *types.Type, src *ssa.Value) *ssa.Value {
+	if flag_txn && src.LoadWithinTx {
+		return s.txnReadLog(src)
+	}
 	s.instrument(t, src, false)
 	return s.rawLoad(t, src)
 }
@@ -735,7 +738,7 @@ func (s *state) rawLoad(t *types.Type, src *ssa.Value) *ssa.Value {
 }
 
 func (s *state) store(t *types.Type, dst, val *ssa.Value) {
-	if flag_txn && dst.WithinTx && !s.isAllocatedOnStack(dst) {
+	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
 		s.txnLog(dst, val)
 	} else {
 		s.vars[&memVar] = s.newValue3A(ssa.OpStore, types.TypeMem, t, dst, val, s.mem())
@@ -744,7 +747,7 @@ func (s *state) store(t *types.Type, dst, val *ssa.Value) {
 
 func (s *state) zero(t *types.Type, dst *ssa.Value) {
 	s.instrument(t, dst, true)
-	if flag_txn && dst.WithinTx && !s.isAllocatedOnStack(dst) {
+	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
 		s.txnLog(dst, s.constInt(types.Types[TINT], 0))
 	} else {
 		store := s.newValue2I(ssa.OpZero, types.TypeMem, t.Size(), dst, s.mem())
@@ -756,7 +759,7 @@ func (s *state) zero(t *types.Type, dst *ssa.Value) {
 func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 	s.instrument(t, src, false)
 	s.instrument(t, dst, true)
-	if flag_txn && dst.WithinTx && !s.isAllocatedOnStack(dst) {
+	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
 		s.txnLog(dst, src)
 	} else {
 		store := s.newValue3I(ssa.OpMove, types.TypeMem, t.Size(), dst, src, s.mem())
@@ -907,8 +910,12 @@ func (s *state) stmt(n *Node) {
 		}
 
 		if flag_txn && n.IsInjectedTxStmt() {
-			n.Left.SetInjectedTxStmt(true)
-			n.Right.SetInjectedTxReadLog(true)
+			if !n.Left.IsAutoTmp() {
+				markNodeForTxLog(n.Left)
+			}
+			if !n.Right.IsAutoTmp() {
+				markNodeForTxReadLog(n.Right)
+			}
 		}
 
 		// Evaluate RHS.
@@ -1695,13 +1702,15 @@ func (s *state) expr(n *Node) *ssa.Value {
 			sym := funcsym(n.Sym).Linksym()
 			return s.entryNewValue1A(ssa.OpAddr, types.NewPtr(n.Type), sym, s.sb)
 		}
+		if flag_txn && n.IsInjectedTxReadLog() {
+			addr := s.addr(n, false)
+			addr.LoadWithinTx = true
+			return s.load(n.Type, addr)
+		}
 		if s.canSSA(n) {
 			return s.variable(n, n.Type)
 		}
 		addr := s.addr(n, false)
-		if flag_txn && n.IsInjectedTxReadLog() {
-			addr.WithinTx = true
-		}
 		return s.load(n.Type, addr)
 	case OCLOSUREVAR:
 		addr := s.addr(n, false)
@@ -2227,7 +2236,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 	case OIND:
 		p := s.exprPtr(n.Left, false, n.Pos)
 		if flag_txn && n.IsInjectedTxReadLog() {
-			p.WithinTx = true
+			p.LoadWithinTx = true
 		}
 		return s.load(n.Type, p)
 
@@ -2241,6 +2250,12 @@ func (s *state) expr(n *Node) *ssa.Value {
 			}
 			return s.zeroVal(n.Type)
 		}
+		if flag_txn && n.IsInjectedTxReadLog() {
+			p := s.addr(n, false)
+			p.LoadWithinTx = true
+			return s.load(n.Type, p)
+		}
+
 		// If n is addressable and can't be represented in
 		// SSA, then load just the selected field. This
 		// prevents false memory dependencies in race/msan
@@ -2255,9 +2270,17 @@ func (s *state) expr(n *Node) *ssa.Value {
 	case ODOTPTR:
 		p := s.exprPtr(n.Left, false, n.Pos)
 		p = s.newValue1I(ssa.OpOffPtr, types.NewPtr(n.Type), n.Xoffset, p)
+		if flag_txn && n.IsInjectedTxReadLog() {
+			p.LoadWithinTx = true
+		}
 		return s.load(n.Type, p)
 
 	case OINDEX:
+		if flag_txn && n.IsInjectedTxReadLog() {
+			p := s.addr(n.Left, false)
+			q := s.expr(n.Right)
+			return s.txnReadLog(p, q)
+		}
 		switch {
 		case n.Left.Type.IsString():
 			if n.Bounded() && Isconst(n.Left, CTSTR) && Isconst(n.Right, CTINT) {
@@ -2355,7 +2378,6 @@ func (s *state) expr(n *Node) *ssa.Value {
 		return s.newValue3(ssa.OpSliceMake, n.Type, p, l, c)
 
 	case OSLICE, OSLICEARR, OSLICE3, OSLICE3ARR:
-		v := s.expr(n.Left)
 		var i, j, k *ssa.Value
 		low, high, max := n.SliceBounds()
 		if low != nil {
@@ -2367,11 +2389,18 @@ func (s *state) expr(n *Node) *ssa.Value {
 		if max != nil {
 			k = s.extendIndex(s.expr(max), panicslice)
 		}
+		if flag_txn && n.IsInjectedTxReadLog() {
+			if max != nil {
+				s.Fatalf("[ssa.go] txn block can't understand expr %v\n", n)
+			}
+			v := s.addr(n.Left, false)
+			return s.txnReadLog(v, i, j)
+		}
+		v := s.expr(n.Left)
 		p, l, c := s.slice(n.Left.Type, v, i, j, k, n.Bounded())
 		return s.newValue3(ssa.OpSliceMake, n.Type, p, l, c)
 
 	case OSLICESTR:
-		v := s.expr(n.Left)
 		var i, j *ssa.Value
 		low, high, _ := n.SliceBounds()
 		if low != nil {
@@ -2380,6 +2409,11 @@ func (s *state) expr(n *Node) *ssa.Value {
 		if high != nil {
 			j = s.extendIndex(s.expr(high), panicslice)
 		}
+		if flag_txn && n.IsInjectedTxReadLog() {
+			v := s.addr(n.Left, false)
+			return s.txnReadLog(v, i, j)
+		}
+		v := s.expr(n.Left)
 		p, l, _ := s.slice(n.Left.Type, v, i, j, nil, n.Bounded())
 		return s.newValue2(ssa.OpStringMake, n.Type, p, l)
 
@@ -2710,7 +2744,7 @@ func (s *state) assign(left *Node, right *ssa.Value, deref bool, skip skipMask) 
 	}
 	addr := s.addr(left, false)
 	if flag_txn && left.IsInjectedTxStmt() {
-		addr.WithinTx = true
+		addr.StoreWithinTx = true
 	}
 	if isReflectHeaderDataField(left) {
 		// Package unsafe's documentation says storing pointers into
@@ -3711,7 +3745,7 @@ func (s *state) call(n *Node, k callKind) *ssa.Value {
 		}
 		i := s.expr(fn.Left)
 		if flag_txn && n.IsInjectedTxStmt() {
-			s.txIntf = i
+			s.txIntf = i // tx.Begin() call, store tx interface
 		}
 		itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], i)
 		s.nilCheck(itab)
@@ -4146,15 +4180,16 @@ func (s *state) rtcall(fn *obj.LSym, returns bool, results []*types.Type, args .
 
 // isAllocatedOnStack returns whether v is known to be an address
 // derived from (*ssa).IsStackAddr(). If v is still an OpFwdRef, perform
-// a lookup to get a valid definition of v, prior to insertPhis().
-// TODO: (mohitv) This could fail for when direct definition of the variable
-// cannot be found. Eg: either a stack arg passed from a calling function
-// With force escape for variables on lhs of assignments within transaction,
-// this function may not be needed.
+// a lookup to get a valid definition of v. This is needed because this method
+// is intended to be called when ssa of each statement is generated for the
+// first time. insertPhis() has not been called yet.
+// TODO: (mohitv) If the direct definition of the variable cannot be found, eg:
+// the variable is a stack arg passed from a calling function, this method is not
+// reliable. This can be fixed if lookup is done across functions, something
+// similar to what is done in escape analysis.
+// With forced escape for variables on either side of assignments within
+// transaction, this function is not needed.
 func (s *state) isAllocatedOnStack(v *ssa.Value) bool {
-	if !flag_txn {
-		panic(fmt.Sprintf("flag_txn not set, but (*state).isAllocatedOnStack called"))
-	}
 	for v.Op == ssa.OpOffPtr || v.Op == ssa.OpAddPtr || v.Op == ssa.OpPtrIndex || v.Op == ssa.OpCopy {
 		v = v.Args[0]
 	}
@@ -4170,7 +4205,7 @@ func (s *state) isAllocatedOnStack(v *ssa.Value) bool {
 			}
 		}
 		if defVal == nil {
-			panic(fmt.Sprintf("[go-pmem] couldn't resolve OpFwdRef, don't know what to do"))
+			s.Fatalf("[ssa.go] couldn't resolve OpFwdRef, don't know what to do")
 		}
 		return s.isAllocatedOnStack(defVal)
 	case ssa.OpSP, ssa.OpLocalAddr:
@@ -4179,9 +4214,98 @@ func (s *state) isAllocatedOnStack(v *ssa.Value) bool {
 	return false
 }
 
+func markNodeForTxLog(n *Node) {
+	n.SetInjectedTxStmt(true)
+	if n.Op == OINDEX {
+		markNodeForTxReadLog(n.Left)
+		markNodeForTxReadLog(n.Right)
+	}
+}
+
+// Cases which set the InjectedTxReadLog flag of Node, need to be handled
+// explicitly in *state.expr method
+func markNodeForTxReadLog(n *Node) {
+	switch n.Op {
+	case OLITERAL, OSTRUCTLIT, OARRAYLIT, OSLICELIT:
+		// do nothing
+	case ONAME, OIND, ODOTPTR, ODOT:
+		n.SetInjectedTxReadLog(true)
+	// binary ops
+	case OLT, OEQ, ONE, OLE, OGE, OGT, OADD, OSUB, OMUL, ODIV, OMOD, OAND,
+		OOR, OXOR, OLSH, ORSH, OANDAND, OOROR, OCOMPLEX:
+		markNodeForTxReadLog(n.Left)
+		markNodeForTxReadLog(n.Right)
+	// unary ops
+	case OMINUS, ONOT, OCOM, OIMAG, OREAL, OPLUS:
+		markNodeForTxReadLog(n.Left)
+	case OINDEX:
+		n.SetInjectedTxReadLog(true)
+		markNodeForTxReadLog(n.Right)
+	case OSLICE, OSLICEARR, OSLICESTR:
+		n.SetInjectedTxReadLog(true)
+		low, high, max := n.SliceBounds()
+		if low != nil {
+			markNodeForTxReadLog(low)
+		}
+		if high != nil {
+			markNodeForTxReadLog(high)
+		}
+		if max != nil {
+			panic(fmt.Sprintf("[ssa.go] compiler error. OSLICE/OSLICEARR/OSLICESTR",
+				"shouldn't have 3 args within []"))
+		}
+	case OADDR:
+		// Do nothing.
+		// Not reading this from log. If a call to ReadLog() is made, it would
+		// look something like tx.ReadLog(&&p) which would be a syntax error
+	default:
+		panic(fmt.Sprintf("[ssa.go] op %v", n.Op, "not supported on rhs of assignments within txn"))
+	}
+}
+
+// Used when preparing args for methods of transaction interface. These args are
+// passed as one slice of empty interfaces. sl is the slice of empty interfaces
+// whose space is pre-allocated before entering this function.
+// argNum is the position within the slice where the new arg will be stored.
+func (s *state) txnCallPrepareArg(arg, sl, argNum *ssa.Value) {
+	argType := arg.Type
+	typeNameNode := typename(argType)
+	intfPtrType := types.NewPtr(types.Types[TINTER])
+	byteptr := s.f.Config.Types.BytePtr
+	var runtimeTypeConvFn *obj.LSym
+	switch {
+	case argType.Size() == 2 && argType.Align == 2:
+		runtimeTypeConvFn = sysfunc("convT2E16")
+	case argType.Size() == 4 && argType.Align == 4 && !types.Haspointers(argType):
+		runtimeTypeConvFn = sysfunc("convT2E32")
+	case argType.Size() == 8 && argType.Align == types.Types[TUINT64].Align && !types.Haspointers(argType):
+		runtimeTypeConvFn = sysfunc("convT2E64")
+	case argType.IsString():
+		runtimeTypeConvFn = sysfunc("convT2Estring")
+	case argType.IsSlice():
+		runtimeTypeConvFn = sysfunc("convT2Eslice")
+	case !types.Haspointers(argType):
+		runtimeTypeConvFn = sysfunc("convT2Enoptr")
+	default:
+		runtimeTypeConvFn = sysfunc("convT2E")
+	}
+
+	intf := s.rtcall(runtimeTypeConvFn, true, []*types.Type{types.Types[TINTER]}, s.expr(typeNameNode), arg)
+	i := intf[0]
+	p := s.newValue2(ssa.OpPtrIndex, intfPtrType, sl, argNum)
+	itab := s.newValue1(ssa.OpITab, byteptr, i)
+	s.store(types.Types[TUINTPTR], p, itab)
+	idata := s.newValue1(ssa.OpIData, byteptr, i)
+	p = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, p)
+	s.store(byteptr, p, idata)
+}
+
 // sets up call to a method of transaction interface
 // The method to call is specified through fnOffset.
-// Arguments to pass are in arg variable.
+// Arguments to the method are in arg (which is already a slice of empty
+// interfaces). Returns the ssa.Value for call & offset so the caller can save
+// return values on stack
+// Implementation partly taken from *state.call & *state.rtcall methods
 func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) {
 	if s.txIntf == nil {
 		s.Fatalf("txn should have been in vars/fwdVars map already")
@@ -4211,77 +4335,117 @@ func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) 
 	return call, off
 }
 
-// txnLog issues a call to the tx logging function txn.Log
-// The args need to be converted to a slice of empty interfaces as
-// txn.Log() accepts variadic arg of type empty interface. See walk.go:walkcall()
-// function where this is originally done as part of AST manipulation.
-// txnLog implementation is inspired by (*state).rtcall() method
-func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
-	if !flag_txn {
-		panic("flag_txn is off, should not be creating ssa node for txn call")
-	}
-
-	// TODO: (mohitv) Using consts 0,1,2 for now
-	const0 := s.constInt64(types.Types[TINT64], 0)
-	const1 := s.constInt64(types.Types[TINT64], 1)
-	const2 := s.constInt64(types.Types[TINT64], 2)
-
+func (s *state) txnReadLog(args ...*ssa.Value) *ssa.Value {
+	numArgs := len(args)
 	intfType := types.Types[TINTER]
 	slType := types.NewSlice(types.Types[TINTER])
-	arrType := types.NewArray(types.Types[TINTER], 2)
+	arrType := types.NewArray(types.Types[TINTER], int64(numArgs))
 	intfPtrType := types.NewPtr(intfType)
 	byteptr := s.f.Config.Types.BytePtr
 
 	runtimeNewFn := sysfunc("newobject")
-
 	typeNameNode := typename(arrType)
+
+	// create space for slice of empty interface by calling into runtime.
+	// This is the space for arg to ReadLog() method
 	sl := s.rtcall(runtimeNewFn, true, []*types.Type{types.NewPtr(arrType)}, s.expr(typeNameNode))
-	sl0 := sl[0]
+	sl0 := sl[0] // Only one return value, which is the storage space of slice
 
 	// 0th arg
-	i0 := s.newValue2(ssa.OpIMake, types.Types[TINTER], s.expr(typename(left.Type)), left)
+	i0 := s.newValue2(ssa.OpIMake, types.Types[TINTER], s.expr(typename(args[0].Type)), args[0])
 	s.nilCheck(sl0)
-	p := s.newValue2(ssa.OpPtrIndex, intfPtrType, sl0, const0)
+	p := s.newValue2(ssa.OpPtrIndex, intfPtrType, sl0, s.constInt64(types.Types[TINT64], 0))
 	itab0 := s.newValue1(ssa.OpITab, byteptr, i0)
 	s.store(types.Types[TUINTPTR], p, itab0)
 	idata0 := s.newValue1(ssa.OpIData, byteptr, i0)
 	p = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, p)
 	s.store(byteptr, p, idata0)
 
-	// 1st arg needs to be converted to empty interface explicitly
-	rType := right.Type
-	typeNameNode = typename(rType)
-	var runtimeTypeConvFn *obj.LSym
-	switch {
-	case rType.Size() == 2 && rType.Align == 2:
-		runtimeTypeConvFn = sysfunc("convT2E16")
-	case rType.Size() == 4 && rType.Align == 4 && !types.Haspointers(rType):
-		runtimeTypeConvFn = sysfunc("convT2E32")
-	case rType.Size() == 8 && rType.Align == types.Types[TUINT64].Align && !types.Haspointers(rType):
-		runtimeTypeConvFn = sysfunc("convT2E64")
-	case rType.IsString():
-		runtimeTypeConvFn = sysfunc("convT2Estring")
-	case rType.IsSlice():
-		runtimeTypeConvFn = sysfunc("convT2Eslice")
-	case !types.Haspointers(rType):
-		runtimeTypeConvFn = sysfunc("convT2Enoptr")
-	default:
-		runtimeTypeConvFn = sysfunc("convT2E")
+	// check if there are other args. If yes, convert them to empty interface
+	// and store in the slice of empty interfaces.
+	if numArgs > 1 { // 1st arg
+		s.txnCallPrepareArg(args[1], sl0, s.constInt64(types.Types[TINT64], 1))
 	}
+	if numArgs > 2 { // 2nd arg
+		s.txnCallPrepareArg(args[2], sl0, s.constInt64(types.Types[TINT64], 2))
+	}
+	if numArgs > 3 || numArgs < 1 {
+		s.Fatalf("[ssa.go] Incorrect num of args: %v", numArgs,
+			"while injecting call to tx.ReadLog")
+	}
+	slLength := s.constInt64(types.Types[TINT64], int64(numArgs))
 
-	intf := s.rtcall(runtimeTypeConvFn, true, []*types.Type{intfType}, s.expr(typeNameNode), right)
-	i1 := intf[0]
+	// Make slice of args from the storage space allocated
+	arg := s.newValue3(ssa.OpSliceMake, slType, sl0, slLength, slLength)
+
+	// set up call to ReadLog method of transaction interface
+	txReadLog := typecheck(txReadLogFn.Left, Ecall) // txn.ReadLog, not the fn call
+	fnOffset := txReadLog.Xoffset
+	call, off := s.txnIntfCall(fnOffset, arg)
+
+	// collect the result, reset method's stack space and do type assertion
+	off = Rnd(off, intfType.Alignment())
+	ptr := s.constOffPtrSP(intfPtrType, off)
+	result := s.load(intfType, ptr)
+	off += intfType.Size()
+	off = Rnd(off, int64(Widthptr))
+	call.AuxInt = off
+
+	// The return value of ReadLog() method is interface. Get the IData & load
+	// the value
+	// TODO: (mohitv) not inserting ssa nodes for type assertion here
+
+	if numArgs == 2 { // TODO: (mohitv) This is hacky & can change in the future
+		// depending on API of ReadLog() method of transaction interface.
+		// To read slice element, current usage is:
+		// a := tx.ReadLog(&s, 10).(int) <-- returns s[10]
+		// 1st arg is pointer to slice of ints and return is interface which can
+		// be converted to int with type assertion
+		rtType := args[0].Type.Elem().Elem()
+		idata := s.newValue1(ssa.OpIData, types.NewPtr(rtType), result)
+		return s.load(rtType, idata)
+	}
+	idata := s.newValue1(ssa.OpIData, args[0].Type, result)
+	return s.load(args[0].Type.Elem(), idata)
+}
+
+// txnLog issues a call to the tx logging function txn.Log
+// The args need to be converted to a slice of empty interfaces as
+// txn.Log() accepts variadic arg of type empty interface. See walk.go:walkcall()
+// function where this is originally done as part of AST manipulation.
+// txnLog implementation is inspired by (*state).rtcall() method
+func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
+	numArgs := 2 // TODO: (mohitv) This is fixed to 2 & depends on API of Log() method
+	intfPtrType := types.NewPtr(types.Types[TINTER])
+	slType := types.NewSlice(types.Types[TINTER])
+	arrType := types.NewArray(types.Types[TINTER], int64(numArgs))
+	byteptr := s.f.Config.Types.BytePtr
+
+	runtimeNewFn := sysfunc("newobject")
+
+	typeNameNode := typename(arrType)
+
+	// create space for slice of empty interface by calling into runtime.
+	// This is the space for arg to Log() method
+	sl := s.rtcall(runtimeNewFn, true, []*types.Type{types.NewPtr(arrType)}, s.expr(typeNameNode))
+	sl0 := sl[0] // Only one return value, which is the storage space of slice
+
+	// 0th arg
+	i0 := s.newValue2(ssa.OpIMake, types.Types[TINTER], s.expr(typename(left.Type)), left)
 	s.nilCheck(sl0)
-	p = s.newValue2(ssa.OpPtrIndex, intfPtrType, sl0, const1)
-	itab1 := s.newValue1(ssa.OpITab, byteptr, i1)
-	s.store(types.Types[TUINTPTR], p, itab1)
-	idata1 := s.newValue1(ssa.OpIData, byteptr, i1)
+	p := s.newValue2(ssa.OpPtrIndex, intfPtrType, sl0, s.constInt64(types.Types[TINT64], 0))
+	itab0 := s.newValue1(ssa.OpITab, byteptr, i0)
+	s.store(types.Types[TUINTPTR], p, itab0)
+	idata0 := s.newValue1(ssa.OpIData, byteptr, i0)
 	p = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, p)
-	s.store(byteptr, p, idata1)
-	s.nilCheck(sl0)
+	s.store(byteptr, p, idata0)
 
-	// make slice of args
-	arg := s.newValue3(ssa.OpSliceMake, slType, sl0, const2, const2)
+	// 1st arg of Log() call needs to be converted to empty interface explicitly
+	s.txnCallPrepareArg(right, sl0, s.constInt64(types.Types[TINT64], 1))
+
+	// Make slice of args from the storage space allocated
+	slLength := s.constInt64(types.Types[TINT64], int64(numArgs))
+	arg := s.newValue3(ssa.OpSliceMake, slType, sl0, slLength, slLength)
 
 	// set up call to Log method of transaction interface
 	txLog := typecheck(txLogFn.Left, Ecall) // txLog = txn.Log, not the function call
@@ -4294,7 +4458,7 @@ func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
 // do *left = right for type t.
 func (s *state) storeType(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	s.instrument(t, left, true)
-	if flag_txn && left.WithinTx && !s.isAllocatedOnStack(left) {
+	if flag_txn && left.StoreWithinTx && !s.isAllocatedOnStack(left) {
 		s.txnLog(left, right)
 		return
 	}
