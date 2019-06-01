@@ -46,6 +46,7 @@
 #define SYS_openat		257
 #define SYS_faccessat		269
 #define SYS_epoll_pwait		281
+#define SYS_fallocate		285
 #define SYS_epoll_create1	291
 #define SYS_pipe2		293
 
@@ -124,6 +125,19 @@ TEXT runtime·pipe2(SB),NOSPLIT,$0-20
 	MOVL	$SYS_pipe2, AX
 	SYSCALL
 	MOVL	AX, errno+16(FP)
+	RET
+
+TEXT runtime·fallocate(SB),NOSPLIT,$0-36
+	MOVQ	fd+0(FP), DI
+	MOVQ	mode+8(FP), SI
+	MOVQ	offset+16(FP), DX
+	MOVQ	len+24(FP), R10
+	MOVL	$SYS_fallocate, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+32(FP)
 	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$16
