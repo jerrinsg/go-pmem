@@ -8,9 +8,12 @@ import (
 )
 
 const (
-	__MAP_SHARED = 0x1
-	S_IFMT       = 0xf000
-	S_IFCHR      = 0x2000
+	__MAP_SHARED         = 0x1
+	_MAP_SHARED_VALIDATE = 0x03
+	_MAP_SYNC            = 0x80000
+	_EOPNOTSUPP          = 95
+	S_IFMT               = 0xf000
+	S_IFCHR              = 0x2000
 	PATH_MAX             = 256
 )
 
@@ -45,19 +48,67 @@ var (
 	pathBuf [PATH_MAX]byte
 )
 
+// Most functions in this file are called as a result of a persistent memory
+// allocation request for the first time (through mallocgc). Therefore, those
+// functions must ensure that it does not create a memory allocation side-effect
+// as this will result in a malloc deadlock.
+
 // A utility function to map a persistent memory file in the address space.
 // This function first tries to map the file with MAP_SYNC flag. This succeeds
 // only if the device the file is on supports direct-access (DAX). If this
 // fails, then a normal mapping of the file is done.
 func utilMap(mapAddr unsafe.Pointer, fd int32, len, flags int, off uintptr,
 	rdonly bool) (unsafe.Pointer, bool, int) {
-	// todo
-	return nil, false, 0
+	protection := _PROT_READ
+	if !rdonly {
+		protection |= _PROT_WRITE
+	}
+
+	if mapAddr != nil {
+		flags |= _MAP_FIXED
+	}
+
+	p, err := mmap(mapAddr, uintptr(len), int32(protection),
+		int32(flags|_MAP_SHARED_VALIDATE|_MAP_SYNC), fd, off)
+	if err == 0 {
+		// Mapping with MAP_SYNC succeeded. Return the mapped address and a
+		// boolean value 'true' to indicate this file is indeed on a persistent
+		//  memory device.
+		return p, true, err
+	} else if err == _EOPNOTSUPP || err == _EINVAL {
+		p, err = mmap(mapAddr, uintptr(len), int32(protection), int32(flags), fd, off)
+		return p, false, err
+	}
+	return p, false, err
+}
+
+func getFileSize(fname string) int {
+	openFlags := _O_RDONLY
+	pathArray := []byte(fname)
+	fd := open(&pathArray[0], int32(openFlags), 0)
+	if fd < 0 {
+		return -1
+	}
+	fsize := getFileSizeFd(fd)
+	closefd(fd)
+	return fsize
 }
 
 func getFileSizeFd(fd int32) int {
-	// todo
-	return 0
+	devDax := utilIsFdDevDax(fd)
+	if devDax {
+		return utilDevDaxSize(fd)
+	}
+	return utilFileSize(fd)
+}
+
+// A helper function to get file size
+func utilFileSize(fd int32) int {
+	var st stat_t
+	if ret := fstat(uintptr(fd), uintptr(unsafe.Pointer(&st))); ret < 0 {
+		return int(ret)
+	}
+	return int(st.size)
 }
 
 func isCharDev(mode uint32) bool {
