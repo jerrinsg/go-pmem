@@ -15,6 +15,7 @@
 #define SYS_read		0
 #define SYS_write		1
 #define SYS_close		3
+#define SYS_fstat		5
 #define SYS_mmap		9
 #define SYS_munmap		11
 #define SYS_brk 		12
@@ -33,6 +34,7 @@
 #define SYS_exit		60
 #define SYS_kill		62
 #define SYS_fcntl		72
+#define SYS_readlink		89
 #define SYS_sigaltstack 	131
 #define SYS_arch_prctl		158
 #define SYS_gettid		186
@@ -127,6 +129,28 @@ TEXT runtime·fallocate(SB),NOSPLIT,$0-36
 	MOVL	AX, ret+32(FP)
 	RET
 
+TEXT runtime·fstat(SB),NOSPLIT,$0-20
+	MOVQ	fd+0(FP), DI
+	MOVQ	stat+8(FP), SI
+	MOVL	$SYS_fstat, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+16(FP)
+	RET
+
+TEXT runtime·readlink(SB),NOSPLIT,$0-28
+	MOVQ	path+0(FP), DI
+	MOVQ	buf+8(FP), SI
+	MOVQ	len+16(FP), DX
+	MOVL	$SYS_readlink, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+24(FP)
+	RET
 
 TEXT runtime·usleep(SB),NOSPLIT,$16
 	MOVL	$0, DX
