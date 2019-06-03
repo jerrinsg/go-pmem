@@ -12,7 +12,7 @@
 #include "libcgo.h"
 
 uintptr_t
-x_cgo_mmap(void *addr, uintptr_t length, int32_t prot, int32_t flags, int32_t fd, uint32_t offset) {
+x_cgo_mmap(void *addr, uintptr_t length, int32_t prot, int32_t flags, int32_t fd, uintptr_t offset) {
 	void *p;
 
 	_cgo_tsan_acquire();

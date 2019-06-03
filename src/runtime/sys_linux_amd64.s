@@ -520,7 +520,7 @@ TEXT runtime·sysMmap(SB),NOSPLIT,$0
 	MOVL	prot+16(FP), DX
 	MOVL	flags+20(FP), R10
 	MOVL	fd+24(FP), R8
-	MOVL	off+28(FP), R9
+	MOVQ	off+32(FP), R9
 
 	MOVL	$SYS_mmap, AX
 	SYSCALL
@@ -528,12 +528,12 @@ TEXT runtime·sysMmap(SB),NOSPLIT,$0
 	JLS	ok
 	NOTQ	AX
 	INCQ	AX
-	MOVQ	$0, p+32(FP)
-	MOVQ	AX, err+40(FP)
+	MOVQ	$0, p+40(FP)
+	MOVQ	AX, err+48(FP)
 	RET
 ok:
-	MOVQ	AX, p+32(FP)
-	MOVQ	$0, err+40(FP)
+	MOVQ	AX, p+40(FP)
+	MOVQ	$0, err+48(FP)
 	RET
 
 // Call the function stored in _cgo_mmap using the GCC calling convention.
@@ -544,14 +544,14 @@ TEXT runtime·callCgoMmap(SB),NOSPLIT,$16
 	MOVL	prot+16(FP), DX
 	MOVL	flags+20(FP), CX
 	MOVL	fd+24(FP), R8
-	MOVL	off+28(FP), R9
+	MOVQ	off+32(FP), R9
 	MOVQ	_cgo_mmap(SB), AX
 	MOVQ	SP, BX
 	ANDQ	$~15, SP	// alignment as per amd64 psABI
 	MOVQ	BX, 0(SP)
 	CALL	AX
 	MOVQ	0(SP), SP
-	MOVQ	AX, ret+32(FP)
+	MOVQ	AX, ret+40(FP)
 	RET
 
 TEXT runtime·sysMunmap(SB),NOSPLIT,$0
