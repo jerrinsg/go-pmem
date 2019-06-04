@@ -20,6 +20,10 @@ TEXT runtime·fallocate(SB), $0
     // not implemented
 	RET
 
+TEXT runtime·msync(SB),$0
+    // not implemented
+	RET
+
 TEXT runtime·unlinkat(SB),$0
     // not implemented
 	RET
