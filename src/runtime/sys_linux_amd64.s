@@ -24,6 +24,7 @@
 #define SYS_rt_sigreturn	15
 #define SYS_pipe		22
 #define SYS_sched_yield 	24
+#define SYS_msync		26
 #define SYS_mincore		27
 #define SYS_madvise		28
 #define SYS_nanosleep		35
@@ -171,6 +172,18 @@ TEXT runtime·unlinkat(SB),NOSPLIT,$0-28
 	MOVQ	path+8(FP), SI
 	MOVQ	flags+16(FP), DX
 	MOVL	$SYS_unlinkat, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+24(FP)
+	RET
+
+TEXT runtime·msync(SB),NOSPLIT,$0-28
+	MOVQ	addr+0(FP), DI
+	MOVQ	len+8(FP), SI
+	MOVQ	flags+16(FP), DX
+	MOVL	$SYS_msync, AX
 	SYSCALL
 	CMPQ	AX, $0xfffffffffffff001
 	JLS	2(PC)
