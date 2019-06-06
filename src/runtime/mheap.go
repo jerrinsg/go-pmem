@@ -511,6 +511,14 @@ func (h *mheap) coalesce(s *mspan) {
 		}
 	}
 
+	// Log that the span got freed before the span is coalesced with earlier/later
+	// spans. Also, span logging need to be enabled only after persistent memory
+	// initialization is completed. A call comes to this function during persistent
+	// memory initialization, during which logging need not be done.
+	if s.memtype == isPersistent && pmemInfo.initState == initDone {
+			logSpanFree(s)
+	}
+
 	// Coalesce with earlier, later spans.
 	if before := spanOf(s.base() - 1); before != nil && before.state == mSpanFree {
 		if s.scavenged == before.scavenged {
