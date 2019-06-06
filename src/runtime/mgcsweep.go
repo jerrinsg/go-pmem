@@ -97,6 +97,7 @@ func (h *mheap) nextSpanForSweep() *mspan {
 	sg := h.sweepgen
 	for sc := sweep.centralIndex.load(); sc < numSweepClasses; sc++ {
 		spc, full := sc.split()
+		// jerrin TODO XXX
 		c := &h.central[isNotPersistent][spc].mcentral
 		var s *mspan
 		if full {
@@ -520,9 +521,9 @@ func (s *mspan) sweep(preserve bool) bool {
 			}
 			// Return span back to the right mcentral list.
 			if uintptr(nalloc) == s.nelems {
-				mheap_.central[isNotPersistent][spc].mcentral.fullSwept(sweepgen).push(s)
+				mheap_.central[s.memtype][spc].mcentral.fullSwept(sweepgen).push(s)
 			} else {
-				mheap_.central[isNotPersistent][spc].mcentral.partialSwept(sweepgen).push(s)
+				mheap_.central[s.memtype][spc].mcentral.partialSwept(sweepgen).push(s)
 			}
 		}
 	} else if !preserve {
@@ -556,7 +557,7 @@ func (s *mspan) sweep(preserve bool) bool {
 		}
 
 		// Add a large span directly onto the full+swept list.
-		mheap_.central[isNotPersistent][spc].mcentral.fullSwept(sweepgen).push(s)
+		mheap_.central[s.memtype][spc].mcentral.fullSwept(sweepgen).push(s)
 	}
 	return false
 }

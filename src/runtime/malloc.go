@@ -629,6 +629,22 @@ func mallocinit() {
 //
 // h must be locked.
 func (h *mheap) sysAlloc(n uintptr, memtype int) (v unsafe.Pointer, size uintptr) {
+	if memtype == isPersistent {
+		// We need to add space for the persistent memory metadata
+		ms := metadataSize(n)
+
+		offset := ms
+		// If this is the first arena, we need to add the space occupied by the
+		// global header
+		if pmemInfo.nextMapOffset == 0 {
+			offset += pmemHeaderSize
+		}
+
+		// Round up offset to page size
+		offset = alignUp(offset, pageSize)
+		n += offset
+	}
+
 	n = alignUp(n, heapArenaBytes)
 
 	// First, try the arena pre-reservation.
