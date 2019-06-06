@@ -6,6 +6,7 @@ import "unsafe"
 
 const (
 	fileCreate = 0
+	hdrMagic   = 0x7376213E
 )
 
 func PersistRange(addr unsafe.Pointer, len uintptr) {
