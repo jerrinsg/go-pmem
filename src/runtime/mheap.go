@@ -468,6 +468,7 @@ type mspan struct {
 	speciallock mutex         // guards specials list
 	specials    *special      // linked list of special records sorted by offset.
 	memtype     int           // the type of memory that this span represents (persistent/volatile)
+	pArena      uintptr       // the pointer to the persistent memory arena header
 }
 
 func (s *mspan) base() uintptr {
@@ -1197,6 +1198,10 @@ func (h *mheap) allocSpan(npages uintptr, manual bool, spanclass spanClass, sysS
 	unlock(&h.lock)
 
 HaveSpan:
+	// jerrin TODO xxx missing t.pArena = s.pArena
+	if s.memtype != memtype {
+		throw("allocSpanLocked: got incorrect span in h.free")
+	}
 	// At this point, both s != nil and base != 0, and the heap
 	// lock is no longer held. Initialize the span.
 	s.init(base, npages)

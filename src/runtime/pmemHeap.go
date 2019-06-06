@@ -8,6 +8,9 @@ import (
 const (
 	// The size of the global header section in persistent memory file
 	pmemHeaderSize = unsafe.Sizeof(pHeader{})
+
+	// The size of the per-arena metadata excluding the span and type bitmap
+	pArenaHeaderSize = unsafe.Sizeof(pArena{})
 )
 
 // Constants representing possible persistent memory initialization states
@@ -55,6 +58,41 @@ type pHeader struct {
 	// If pointers are currently being swizzled, swizzleState captures the current
 	// swizzling state.
 	swizzleState int
+}
+
+// Strucutre of a persistent memory arena header
+// Persistent memory arena header pointers used in the runtime point to the
+// actual data in the beginning of the persistent memory arena, and not to a
+// volatile copy.
+type pArena struct {
+	// To identify this is a go-pmem recognized arena. This can either be a
+	// magic constant or something like a checksum.
+	magic int
+
+	// Size of the persistent memory arena
+	size uintptr
+
+	// Address at which the region corresponding to this arena is mapped
+	// During swizzling mapAddr cannot be reliably used as it might contain the
+	// mapping address from a previous run.
+	mapAddr uintptr
+
+	// The delta value to be used for pointer swizzling
+	delta int
+
+	// The offset of the file region from the beginning of the file at which this
+	// arena is mapped at.
+	fileOffset uintptr
+
+	// The number of bytes of data in this arena that have already been swizzled
+	bytesSwizzled uintptr
+
+	// The following data members are for supporting a minimal per-arena undo log
+	numLogEntries int         // Number of valid entries in the log section
+	logs          [2]logEntry // The actual log data
+
+	// This is followed by the heap type bits log and the span bitmap log which
+	// occupies a variable number of bytes depending on the size of the arena.
 }
 
 // A volatile data-structure which stores all the necessary information about
