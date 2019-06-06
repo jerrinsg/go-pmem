@@ -22,6 +22,11 @@ const (
 
 	// the physical page size
 	sysPageSize = 4096
+
+	// A magic constant that will be written to the first 8 bytes of the
+	// persistent memory region. This constant will then help to differentiate
+	// between a first run and subsequent runs.
+	hdrMagic = 0x73E85840266B4B1E
 )
 
 // mapFile creates or opens the file passed as argument and maps it to memory.

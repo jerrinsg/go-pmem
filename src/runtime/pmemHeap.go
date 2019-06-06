@@ -24,6 +24,9 @@ const (
 	isNotPersistent = 0
 	isPersistent    = 1
 
+	// Size of a int/uintptr variable
+	intSize = unsafe.Sizeof(0)
+
 	// maxMemTypes represents the memory types supported - persistent memory
 	// and volatile memory.
 	maxMemTypes = 2
@@ -154,13 +157,75 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	pmemHeader = (*pHeader)(mapAddr)
 	pmemInfo.isPmem = isPmem
 
+	var gcp int
+	firstInit := pmemHeader.magic != hdrMagic
+	if firstInit {
+		// First time initialization
+		// Store the mapped size in the header section
+		pmemHeader.mappedSize = pmemHeaderSize
+		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), intSize)
+
+		// Store the magic constant in the header section
+		pmemHeader.magic = hdrMagic
+		PersistRange(unsafe.Pointer(&pmemHeader.magic), intSize)
+		println("First time initialization")
+	} else {
+		println("Not a first time intialization")
+		err := verifyMetadata()
+		if err != nil {
+			unmapHeader()
+			return nil, err
+		}
+
+		// Disable garbage collection during persistent memory initialization
+		gcp = int(setGCPercent(-1))
+
+		// Map all arenas found in the persistent memory file to memory. This
+		// function creates spans for the in-use regions of memory in the
+		// arenas, restores the heap type bits for the 'recreated' spans, and
+		// swizzles all pointers in the arenas if necessary.
+		err = mapArenas()
+		if err != nil {
+			unmapHeader()
+			return nil, err
+		}
+	}
 	// TODO - Set persistent memory as initialized
+
+	if !firstInit {
+		// Enable garbage collection
+		enableGC(gcp)
+	}
 
 	return nil, error(errorString("Persistent memory initialization not fully supported"))
 }
 
+func mapArenas() error {
+	// todo
+	return nil
+}
+
+// A helper function that unmaps the header section of the persistent memory
+// file in case any errors happen during the reconstruction process.
+func unmapHeader() {
+	munmap(unsafe.Pointer(pmemHeader), pmemHeaderSize)
+}
+
 // InPmem checks whether 'addr' is an address in the persistent memory range
 func InPmem(addr uintptr) bool {
-	// TODO
-	return false
+	s := spanOfHeap(addr)
+	if s == nil {
+		return false
+	}
+	return s.memtype == isPersistent
+}
+
+// enableGC runs a full GC cycle in a new goroutine.
+// The argumnet gcp specifies garbage collection percentage and controls how
+// often GC is run (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
+// Default value of gcp is 100.
+func enableGC(gcp int) {
+	setGCPercent(int32(gcp)) // restore GC percentage
+	// Run GC so that unused memory in reconstructed spans are reclaimed
+	go GC()
 }
