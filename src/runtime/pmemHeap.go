@@ -220,6 +220,34 @@ func InPmem(addr uintptr) bool {
 	return s.memtype == isPersistent
 }
 
+// GetRoot returns the application root pointer. After a restart, the swizzling
+// code will take care of setting the correct 'swizzled' pointer as root.
+// GetRoot() returns nil if it is called before persistent memory initialization
+// is completed.
+func GetRoot() unsafe.Pointer {
+	return pmemInfo.root
+}
+
+// SetRoot stores the application root pointer in the persistent memory header
+// region.
+func SetRoot(addr unsafe.Pointer) (err error) {
+	s := spanOfHeap(uintptr(addr))
+	if s == nil || s.memtype != isPersistent {
+		return error(errorString("Invalid address passed to SetRoot"))
+	}
+
+	pa := (*pArena)(unsafe.Pointer(s.pArena))
+	fo := pa.fileOffset
+	po := uintptr(addr) - s.pArena
+
+	lock(&pmemInfo.rootLock)
+	pmemInfo.root = addr
+	pmemHeader.rootOffset = po + fo
+	PersistRange((unsafe.Pointer)(&pmemHeader.rootOffset), intSize)
+	unlock(&pmemInfo.rootLock)
+	return
+}
+
 // enableGC runs a full GC cycle in a new goroutine.
 // The argumnet gcp specifies garbage collection percentage and controls how
 // often GC is run (see https://golang.org/pkg/runtime/debug/#SetGCPercent).
