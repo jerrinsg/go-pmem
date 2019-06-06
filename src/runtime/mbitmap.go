@@ -812,7 +812,14 @@ func (s *mspan) countAlloc() int {
 // bits that belong to neighboring objects. Also, on weakly-ordered
 // machines, callers must execute a store/store (publication) barrier
 // between calling this function and making the object reachable.
-func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
+//
+// shouldLog indicates whether the heap bits should be logged in the persistent
+// memory heap type bitmap. Heap type bit logging is done for objects created in
+// persistent memory region.
+func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
+	// startAddr and endAddr indicates the heap type bitmap address range that must
+	// be logged in persistent memory.
+	var startAddr, endAddr *byte
 	const doubleCheck = false // slow but helpful; enable to test modifications to this code
 
 	const (
@@ -843,10 +850,16 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 				throw("heapBitsSetType: scan bit missing")
 			}
 		}
+		if shouldLog {
+			h := heapBitsForAddr(x)
+			logHeapBits(x, h.bitp, h.bitp)
+		}
 		return
 	}
 
 	h := heapBitsForAddr(x)
+	startAddr = h.bitp
+	endAddr = h.bitp
 	ptrmask := typ.gcdata // start of 1-bit pointer mask (or GC program, handled below)
 
 	// 2-word objects only have 4 bitmap bits and 3-word objects only have 6 bitmap bits.
@@ -874,6 +887,9 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 				// 2-element array of pointer.
 				*h.bitp |= (bitPointer | bitScan | (bitPointer|bitScan)<<heapBitsShift) << h.shift
 			}
+			if shouldLog {
+				logHeapBits(x, startAddr, endAddr)
+			}
 			return
 		}
 		// Otherwise typ.size must be 2*sys.PtrSize,
@@ -891,6 +907,9 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 		// appropriate ones.
 		*h.bitp &^= (bitPointer | bitScan | ((bitPointer | bitScan) << heapBitsShift)) << h.shift
 		*h.bitp |= uint8(hb << h.shift)
+		if shouldLog {
+			logHeapBits(x, startAddr, endAddr)
+		}
 		return
 	} else if size == 3*sys.PtrSize {
 		b := uint8(*ptrmask)
@@ -955,6 +974,11 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 			*h.bitp &^= mask2
 			*h.bitp |= (hb >> 1) & mask2
 		}
+		if shouldLog {
+			endAddr = h.bitp
+			logHeapBits(x, startAddr, endAddr)
+		}
+
 		return
 	}
 
@@ -976,6 +1000,8 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 		outOfPlace = true
 		h.bitp = (*uint8)(unsafe.Pointer(x))
 		h.last = nil
+		startAddr = h.bitp
+		endAddr = h.bitp
 	}
 
 	var (
@@ -1001,7 +1027,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 	// as the 1-bit case. Nothing above could have encountered
 	// GC programs: the cases were all too small.
 	if typ.kind&kindGCProg != 0 {
-		heapBitsSetTypeGCProg(h, typ.ptrdata, typ.size, dataSize, size, addb(typ.gcdata, 4))
+		heapBitsSetTypeGCProg(h, typ.ptrdata, typ.size, dataSize, size, addb(typ.gcdata, 4), shouldLog)
 		if doubleCheck {
 			// Double-check the heap bits written by GC program
 			// by running the GC program to create a 1-bit pointer mask
@@ -1298,6 +1324,11 @@ Phase3:
 		}
 	}
 
+	// In all code paths up till this point, hbitp will be set as the address of
+	// the next byte where heap bits should be written. Hence the last address at
+	// which heap bits were written into is hbitp-1
+	endAddr = subtract1(hbitp)
+
 	// Write final partial bitmap byte if any.
 	// We know w > nw, or else we'd still be in the loop above.
 	// It can be bigger only due to the 4 entries in hb that it counts.
@@ -1308,6 +1339,11 @@ Phase3:
 	// existing bits.
 	if w == nw+2 {
 		*hbitp = *hbitp&^(bitPointer|bitScan|(bitPointer|bitScan)<<heapBitsShift) | uint8(hb)
+		endAddr = hbitp
+	}
+
+	if shouldLog {
+		logHeapBits(x, startAddr, endAddr)
 	}
 
 Phase4:
@@ -1469,7 +1505,13 @@ var debugPtrmask struct {
 // heapBitsSetType requires that allocSize is a multiple of 4 words,
 // so that the relevant bitmap bytes are not shared with surrounding
 // objects.
-func heapBitsSetTypeGCProg(h heapBits, progSize, elemSize, dataSize, allocSize uintptr, prog *byte) {
+//
+// Logging heap type bits for GC program is not yet supported.
+func heapBitsSetTypeGCProg(h heapBits, progSize, elemSize, dataSize, allocSize uintptr, prog *byte, shouldLog bool) {
+	if shouldLog {
+		throw("Type bitmap logging not yet supported for GC program")
+	}
+
 	if sys.PtrSize == 8 && allocSize%(4*sys.PtrSize) != 0 {
 		// Alignment will be wrong.
 		throw("heapBitsSetTypeGCProg: small allocation")
