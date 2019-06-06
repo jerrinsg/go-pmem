@@ -1458,6 +1458,14 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool) {
 		mSysStatInc(&memstats.heap_idle, s.npages*pageSize)
 	}
 
+	// Log that the span got freed. Also, span logging need to be enabled only
+	// after persistent memory initialization is completed. A call comes to this
+	// function during persistent memory initialization, during which logging need
+	// not be done.
+	if s.memtype == isPersistent && pmemInfo.initState == initDone {
+		logSpanFree(s)
+	}
+
 	// Mark the space as free.
 	h.pages[isNotPersistent].free(s.base(), s.npages)
 
