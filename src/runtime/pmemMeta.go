@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"runtime/internal/sys"
+	"unsafe"
 )
 
 const (
@@ -73,6 +74,50 @@ func (p *pArena) layout() (uintptr, uintptr) {
 // truncated. Also, it ensures that the header magic in each of the arena
 // metadata section is correct.
 func verifyMetadata() error {
+	// If the file size is less than the mapped size, then it was externally truncated
+	mappedSize := pmemHeader.mappedSize
+	fsize := getFileSize(pmemInfo.fname)
+	if fsize < 0 {
+		return error(errorString("Get file size failed"))
+	}
+	if fsize < int(mappedSize) {
+		return error(errorString("File was externally truncated"))
+	}
+
+	if mappedSize == pmemHeaderSize {
+		// The persistent memory file only contains the header region, and does
+		// not contain any arenas.
+		return nil
+	}
+
+	// Map the first page of each arena and check that the arena header magic
+	// is correct. Also ensure that the global mapped size equals the sum of the
+	// size of each arena.
+	totalArenaSize := uintptr(0)
+	for totalArenaSize < mappedSize {
+		arenaOff := uintptr(0)
+		mapAddr, isPmem, err := mapFile(pmemInfo.fname, pageSize, fileCreate,
+			_DEFAULT_FMODE, totalArenaSize, nil)
+		if err != 0 {
+			return error(errorString("Arena map failed"))
+		}
+		if totalArenaSize == 0 {
+			// Add the global header size to get to the first arena's metadata
+			arenaOff = pmemHeaderSize
+		}
+
+		parena := (*pArena)(unsafe.Pointer(uintptr(mapAddr) + arenaOff))
+		if parena.magic != hdrMagic || isPmem != pmemInfo.isPmem {
+			munmap(mapAddr, pageSize)
+			return error(errorString("Arena metadata mismatch"))
+		}
+		totalArenaSize += parena.size
+		munmap(mapAddr, pageSize)
+	}
+
+	if totalArenaSize != mappedSize {
+		return error(errorString("Arena size mismatch"))
+	}
 
 	return nil
 }
