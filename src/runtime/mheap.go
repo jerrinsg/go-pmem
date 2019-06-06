@@ -343,6 +343,8 @@ type mspan struct {
 	speciallock mutex      // guards specials list
 	specials    *special   // linked list of special records sorted by offset.
 	memtype     int        // the type of memory that this span represents (persistent/volatile)
+
+	pArena uintptr // the pointer to the persistent memory arena header
 }
 
 func (s *mspan) base() uintptr {
@@ -920,6 +922,7 @@ HaveSpan:
 		t := (*mspan)(h.spanalloc.alloc())
 		t.init(s.base()+npage<<_PageShift, s.npages-npage)
 		t.memtype = memtype
+		t.pArena = s.pArena
 		s.npages = npage
 		h.setSpan(t.base()-1, s)
 		h.setSpan(t.base(), t)
