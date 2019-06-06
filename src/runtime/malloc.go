@@ -538,6 +538,22 @@ func mallocinit() {
 // The memtype parameter indicates if the memory should be allocated from
 // persistent memory or volatile memory.
 func (h *mheap) sysAlloc(n uintptr, memtype int) (v unsafe.Pointer, size uintptr) {
+	if memtype == isPersistent {
+		// We need to add space for the persistent memory metadata
+		ms := metadataSize(n)
+
+		offset := ms
+		// If this is the first arena, we need to add the space occupied by the
+		// global header
+		if pmemInfo.nextMapOffset == 0 {
+			offset += pmemHeaderSize
+		}
+
+		// Round up offset to page size
+		offset = round(offset, pageSize)
+		n += offset
+	}
+
 	n = round(n, heapArenaBytes)
 
 	// First, try the arena pre-reservation.

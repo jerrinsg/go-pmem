@@ -1274,11 +1274,41 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		h.scavengeLargest(size)
 	}
 
+	allocSize := size
+	var mdSize, offset uintptr
+	var arenaPtr *pArena
+
+	// Write the header data for the new persistent memory arena
+	if memtype == isPersistent {
+		if pmemInfo.nextMapOffset == 0 {
+			// This is the first time heap growth. The first arena stores the
+			// global persistent memory header as well, so leave space for that
+			offset = pmemHeaderSize
+		}
+
+		arenaPtr = (*pArena)(unsafe.Pointer(uintptr(v) + offset))
+		arenaPtr.size = size
+		arenaPtr.mapAddr = uintptr(v)
+		arenaPtr.fileOffset = pmemInfo.nextMapOffset
+		arenaPtr.magic = hdrMagic // todo - replace this with sth like a checksum
+		PersistRange(unsafe.Pointer(arenaPtr), unsafe.Sizeof(*arenaPtr))
+
+		// Increment the mapped size in persistent memory header
+		pmemHeader.mappedSize += (size - offset)
+		PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), unsafe.Sizeof(size))
+
+		mdSize, allocSize = arenaPtr.layout()
+
+		// Increment the next map offset
+		pmemInfo.nextMapOffset += size
+	}
+
 	// Create a fake "in use" span and free it, so that the
 	// right coalescing happens.
 	s := (*mspan)(h.spanalloc.alloc())
-	s.init(uintptr(v), size/pageSize)
+	s.init(uintptr(v)+mdSize, allocSize/pageSize)
 	s.memtype = memtype
+	s.pArena = uintptr(unsafe.Pointer(arenaPtr))
 	h.setSpans(s.base(), s.npages, s)
 	atomic.Store(&s.sweepgen, h.sweepgen)
 	s.state = mSpanInUse
