@@ -355,6 +355,12 @@ func (ar *arenaInfo) reconstruct() {
 			s := createSpan(sval, addr)
 			// TODO
 			// s.pArena = (uintptr)(unsafe.Pointer(pa))
+			// TODO xxx jerrin iterate over all the possible arenas
+			// can span be bigger than 64 mb?
+			// better still would be to do this just at the pmem arena level
+			ai := arenaIndex(addr)
+			arenaT := mheap_.arenas[ai.l1()][ai.l2()]
+			arenaT.pArena = (uintptr)(unsafe.Pointer(pa))
 			ar.restoreSpanHeapBits(s)
 			i += s.npages
 		}
@@ -493,7 +499,21 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 // region, and 'base' is its start address.
 // mheap must be locked before calling this function
 func freeSpan(npages, base uintptr, needzero uint8, parena uintptr) {
-	// TODO
+	h := &mheap_
+	t := (*mspan)(h.spanalloc.alloc())
+	t.init(base, npages)
+	t.memtype = isPersistent
+	// TODO XXX jerrin
+	//t.pArena = parena
+	ai := arenaIndex(base)
+	arena := mheap_.arenas[ai.l1()][ai.l2()]
+	arena.pArena = parena
+
+	// TODO XXX jerrin only first and last need to be set
+	h.setSpans(t.base(), t.npages, t)
+	t.needzero = needzero
+	t.state.set(mSpanInUse)
+	h.freeSpanLocked(t, true, true)
 }
 
 // InPmem checks whether 'addr' is an address in the persistent memory range
@@ -554,7 +574,37 @@ func enableGC(gcp int) {
 // may be contained in one or more volatile arenas. Therefore, this function
 // copies the heap type bits in a per volatile-memory arena manner.
 func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
-	// TODO
+	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
+	// total heap type bytes to be copied
+	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
+
+	spanAddr := s.base()
+	ai := arenaIndex(uintptr(spanAddr))
+	arena := mheap_.arenas[ai.l1()][ai.l2()]
+	parena := (*pArena)(unsafe.Pointer(arena.pArena))
+	spanEnd := spanAddr + (s.npages << pageShift)
+
+	for copied := uintptr(0); copied < totalBytes; {
+		// each iteration copies heap type bits corresponding to the heap region
+		// between 'spanAddr' and 'endAddr'
+		ai = arenaIndex(spanAddr)
+		arenaEnd := arenaBase(ai) + heapArenaBytes
+		endAddr := arenaEnd
+		// Since a span can span across two arenas, the end adress to be used to
+		// copy the heap type bits is the minimium of the span end address and the
+		// arena end address.
+		if spanEnd < endAddr {
+			endAddr = spanEnd
+		}
+
+		numSpanBytes := (endAddr - spanAddr)
+		srcAddr := pmemHeapBitsAddr(spanAddr, parena)
+		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
+		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
+
+		copied += (numSpanBytes / bytesPerBitmapByte)
+		spanAddr += numSpanBytes
+	}
 }
 
 func swizzleArenas(arenas []*arenaInfo) (err error) {
