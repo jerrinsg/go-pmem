@@ -483,7 +483,17 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 // region, and 'base' is its start address.
 // mheap must be locked before calling this function
 func freeSpan(npages, base uintptr, needzero uint8, parena uintptr) {
-	// TODO
+	h := &mheap_
+	t := (*mspan)(h.spanalloc.alloc())
+	t.init(base, npages)
+	t.memtype = isPersistent
+	t.pArena = parena
+
+	h.setSpan(t.base(), t)
+	h.setSpan(t.base()+t.npages*pageSize-1, t)
+	t.needzero = needzero
+	t.state = mSpanManual
+	h.freeSpanLocked(t, false, false, 0)
 }
 
 // InPmem checks whether 'addr' is an address in the persistent memory range
@@ -542,7 +552,35 @@ func enableGC(gcp int) {
 // may be contained in one or more volatile arenas. Therefore, this function
 // copies the heap type bits in a per volatile-memory arena manner.
 func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
-	// TODO
+	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
+	// total heap type bytes to be copied
+	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
+
+	parena := (*pArena)(unsafe.Pointer(s.pArena))
+	spanAddr := s.base()
+	spanEnd := spanAddr + (s.npages << pageShift)
+
+	for copied := uintptr(0); copied < totalBytes; {
+		// each iteration copies heap type bits corresponding to the heap region
+		// between 'spanAddr' and 'endAddr'
+		ai := arenaIndex(spanAddr)
+		arenaEnd := arenaBase(ai) + heapArenaBytes
+		endAddr := arenaEnd
+		// Since a span can span across two arenas, the end adress to be used to
+		// copy the heap type bits is the minimium of the span end address and the
+		// arena end address.
+		if spanEnd < endAddr {
+			endAddr = spanEnd
+		}
+
+		numSpanBytes := (endAddr - spanAddr)
+		srcAddr := pmemHeapBitsAddr(spanAddr, parena)
+		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
+		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
+
+		copied += (numSpanBytes / bytesPerBitmapByte)
+		spanAddr += numSpanBytes
+	}
 }
 
 func swizzleArenas(arenas []*arenaInfo) (err error) {
