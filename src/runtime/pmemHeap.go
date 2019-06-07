@@ -604,6 +604,59 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 	// rangeTable stores the address range at which each arena is mapped at.
 	rangeTable := make([]tuple, len(arenas))
 
+	if pmemHeader.swizzleState == swizzleSetup {
+		// There was a swizzle setup operating happening which did not complete.
+		// Revert the log entries (if any) found in each arena. This would revert
+		// any partial updates to mapAddr and delta value of each arena
+		for _, ar := range arenas {
+			pa := ar.pa
+			pa.revertLog()
+		}
+
+		// Reset swizzle state to swizzleDone
+		pmemHeader.setSwizzleState(swizzleDone)
+	}
+
+	if pmemHeader.swizzleState == swizzleOngoing {
+		// There was a swizzle operation ongoing previously that has to be
+		// completed first
+
+		// Revert log entries (if any) found in each arena
+		for i, ar := range arenas {
+			pa := ar.pa
+			pa.revertLog()
+			// Compute the offset and range value for this arena
+			offsetTable[i] = pa.delta
+			rangeTable[i].s = uintptr(int(pa.mapAddr) - pa.delta)
+			rangeTable[i].e = uintptr(int(pa.mapAddr) - pa.delta + int(pa.size))
+		}
+
+		// Complete any partially completed swizzling operation
+		for _, ar := range arenas {
+			go ar.swizzle(offsetTable, rangeTable, dc)
+		}
+		// Wait until all goroutines complete swizzling.
+		for range arenas {
+			<-dc
+		}
+
+		// Change the delta value in all arenas to 0. This has to be done before
+		// state is set as swizzleDone.
+		for _, ar := range arenas {
+			pa := ar.pa
+			pa.logEntry(unsafe.Pointer(&pa.delta))
+			pa.delta = 0
+			PersistRange(unsafe.Pointer(&pa.delta), intSize)
+			// The data logged here will be discarded when resetLog() is called
+			// before pointers are swizzled.
+		}
+
+		// Set swizzle state as swizzleDone
+		pmemHeader.setSwizzleState(swizzleDone)
+	}
+
+	// At this point any partially completed swizzle operation from previous runs
+	// is completed. If swizzling is required for this run, do that now.
 	for i, ar := range arenas {
 		// Set bytesSwizzled as 0. This can be done without logging as
 		// swizzling is considered to have started only when swizzleState is set
