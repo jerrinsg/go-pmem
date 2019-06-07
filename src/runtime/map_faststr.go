@@ -217,7 +217,7 @@ func mapassign_faststr(t *maptype, h *hmap, s string) unsafe.Pointer {
 	h.flags ^= hashWriting
 
 	if h.buckets == nil {
-		h.buckets = newobject(t.bucket) // newarray(t.bucket, 1)
+		h.buckets = newobject(t.bucket) // newarray(t.bucket, 1, isNotPersistent)
 	}
 
 again:
