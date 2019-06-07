@@ -594,7 +594,80 @@ type tuple struct {
 }
 
 func swizzleArenas(arenas []*arenaInfo) (err error) {
-	// todo
+	// Channel used to synchronize between goroutines that are used to swizzle
+	// arenas.
+	dc := make(chan bool, len(arenas))
+	// The offset table stores, for each arena, the delta value by which pointers
+	// that point into this arena should be offset by.
+	offsetTable := make([]int, len(arenas))
+
+	// rangeTable stores the address range at which each arena is mapped at.
+	rangeTable := make([]tuple, len(arenas))
+
+	for i, ar := range arenas {
+		// Set bytesSwizzled as 0. This can be done without logging as
+		// swizzling is considered to have started only when swizzleState is set
+		// as swizzleOngoing.
+		pa := ar.pa
+		pa.bytesSwizzled = 0
+		PersistRange(unsafe.Pointer(&pa.bytesSwizzled), intSize)
+		pa.resetLog()
+
+		// Compute the offset and range value for this arena using the new
+		// mapped address
+		offsetTable[i] = int(ar.mapAddr) - (int(pa.mapAddr) - pa.delta)
+		rangeTable[i].s = uintptr(int(pa.mapAddr) - pa.delta)
+		rangeTable[i].e = uintptr(int(pa.mapAddr) - pa.delta + int(pa.size))
+	}
+
+	// Set swizzle state as swizzleSetup
+	pmemHeader.setSwizzleState(swizzleSetup)
+
+	for i, ar := range arenas {
+		pa := ar.pa
+		// Write the new map address and delta value to arena header
+		pa.logEntry(unsafe.Pointer(&pa.mapAddr))
+		pa.logEntry(unsafe.Pointer(&pa.delta))
+		pa.mapAddr = ar.mapAddr
+		pa.delta = offsetTable[i]
+		// Commit persists the changes and then resets the log
+		pa.commitLog()
+	}
+
+	// Set swizzle state as swizzleOngoing
+	pmemHeader.setSwizzleState(swizzleOngoing)
+
+	// Swizzle pointers in each arena
+	for _, ar := range arenas {
+		go ar.swizzle(offsetTable, rangeTable, dc)
+	}
+	// Wait until all goroutines complete swizzling.
+	for range arenas {
+		<-dc
+	}
+
+	for _, ar := range arenas {
+		pa := ar.pa
+		pa.logEntry(unsafe.Pointer(&pa.delta))
+		pa.delta = 0
+		PersistRange(unsafe.Pointer(&pa.delta), intSize)
+	}
+
+	// Set swizzle state as swizzleDone
+	// TODO
+
+	for _, ar := range arenas {
+		pa := ar.pa
+		pa.resetLog()
+	}
+
+	// The address of the application root pointer may have changed. So compute
+	// the address of the root pointer, and set it as the root pointer.
+	if pmemHeader.rootOffset != 0 {
+		newRoot := computeRootAddr(pmemHeader.rootOffset, arenas)
+		err = SetRoot(newRoot)
+	}
+
 	return
 }
 
@@ -628,4 +701,10 @@ func findArenaIndex(x uintptr, rangeTable []tuple) int {
 		}
 	}
 	return -1
+}
+
+// Swizzle arena pa. skip is the number of bytes in the beginning of the arena
+// that has to be skipped for swizzling.
+func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool) {
+	// TODO
 }
