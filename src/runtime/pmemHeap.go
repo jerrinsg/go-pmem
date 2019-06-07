@@ -200,15 +200,114 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	return nil, error(errorString("Persistent memory initialization not fully supported"))
 }
 
+// Arena information structure which will be used during reconstruction and
+// swizzling.
+type arenaInfo struct {
+	// Pointer to the arena metadata section in persistent memory
+	pa *pArena
+
+	// The address at which the arena is mapped in this run. This would be
+	// different than pa.mapAddr if the arena mapping address changed.
+	mapAddr uintptr
+}
+
 func mapArenas() error {
-	// todo
-	return nil
+	h := &mheap_
+	// A slice containing information about each mapped arena
+	var arenas []*arenaInfo
+
+	if pmemHeader.mappedSize == pmemHeaderSize {
+		// The persistent memory file contains only the header section and does
+		// not contain any arenas.
+		return nil
+	}
+
+	var mapped uintptr
+	for mapped < pmemHeader.mappedSize {
+		// Map the header section of the arena to get the size of the arena and
+		// the map address. Then unmap the mapped region, and map the entire
+		// arena at the map address.
+		var offset uintptr
+		if mapped == 0 {
+			offset = pmemHeaderSize
+		}
+		mapAddr, _, err := mapFile(pmemInfo.fname, int(pArenaHeaderSize+offset),
+			fileCreate, _DEFAULT_FMODE, mapped, nil)
+		if err != 0 {
+			unmapArenas(arenas)
+			return error(errorString("Arena mapping failed"))
+		}
+
+		// Point at the arena header
+		parena := (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
+		arenaMapAddr := unsafe.Pointer(parena.mapAddr)
+		arenaSize := parena.size
+		munmap(mapAddr, pArenaHeaderSize+offset)
+
+		// Try mapping the arena at the exact address it was mapped previously
+		// mapFile() will fail if the file cannot be mapped at the requested address
+		mapAddr, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
+			_DEFAULT_FMODE, mapped, arenaMapAddr)
+		if err != 0 {
+			// Try mapping the arena again, but at any address
+			mapAddr, _, err = mapFile(pmemInfo.fname, int(arenaSize), fileCreate,
+				_DEFAULT_FMODE, mapped, nil)
+			if err != 0 {
+				unmapArenas(arenas)
+				return error(errorString("Arena mapping failed"))
+			}
+		}
+
+		// Create the volatile memory arena datastructures for the newly mapped
+		// heap regions. Each volatile arena datastructure contains the runtime
+		// heap type bitmap and span table for the region it manages.
+		lock(&h.lock)
+		h.createArenaMetadata(mapAddr, arenaSize)
+		unlock(&h.lock)
+
+		mapped += arenaSize
+
+		// Point the arena header at the actual mapped region
+		parena = (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
+		ar := &arenaInfo{parena, uintptr(mapAddr)}
+		// Reconstruct the spans in this arena
+		ar.reconstruct()
+		arenas = append(arenas, ar)
+	}
+
+	// Update the next offset at which the persistent memory file should be mapped
+	pmemInfo.nextMapOffset = mapped
+
+	err := swizzleArenas(arenas)
+	if err != nil {
+		unmapArenas(arenas)
+	}
+
+	return err
+
+}
+
+// A helper function that iterates the arena slice and unmaps all of them
+func unmapArenas(arenas []*arenaInfo) {
+	for _, ar := range arenas {
+		pa := ar.pa
+		mapAddr := unsafe.Pointer(pa.mapAddr)
+		mapSize := pa.size
+		munmap(mapAddr, mapSize)
+	}
 }
 
 // A helper function that unmaps the header section of the persistent memory
 // file in case any errors happen during the reconstruction process.
 func unmapHeader() {
 	munmap(unsafe.Pointer(pmemHeader), pmemHeaderSize)
+}
+
+// This function goes through the span bitmap found in the arena header, and
+// recreates spans one by one. For each recreated span, it copies the heap type
+// bits from the persistent memory arena header to the runtime arena datastructure.
+func (ar *arenaInfo) reconstruct() {
+	// TODO
 }
 
 // InPmem checks whether 'addr' is an address in the persistent memory range
@@ -256,4 +355,9 @@ func enableGC(gcp int) {
 	setGCPercent(int32(gcp)) // restore GC percentage
 	// Run GC so that unused memory in reconstructed spans are reclaimed
 	go GC()
+}
+
+func swizzleArenas(arenas []*arenaInfo) (err error) {
+	// todo
+	return
 }
