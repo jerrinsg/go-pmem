@@ -13,6 +13,13 @@ const (
 	pArenaHeaderSize = unsafe.Sizeof(pArena{})
 )
 
+// These constants indicate the possible swizzle state.
+const (
+	swizzleDone = iota
+	swizzleSetup
+	swizzleOngoing
+)
+
 // Constants representing possible persistent memory initialization states
 const (
 	initNotDone = iota // Persistent memory not initialiazed
@@ -293,7 +300,6 @@ func mapArenas() error {
 	}
 
 	return err
-
 }
 
 // A helper function that iterates the arena slice and unmaps all of them
@@ -607,7 +613,43 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	}
 }
 
+type tuple struct {
+	s, e uintptr
+}
+
 func swizzleArenas(arenas []*arenaInfo) (err error) {
 	// todo
 	return
+}
+
+// Given the offset to the application root pointer in the persistent memory
+// file, this function computes the actual virtual memory address corresponding
+// to the root offset.
+func computeRootAddr(offset uintptr, arenas []*arenaInfo) unsafe.Pointer {
+	tot := uintptr(0)
+	for _, ar := range arenas {
+		pa := ar.pa
+		if offset < tot+pa.size {
+			aOff := offset - tot
+			pu := uintptr(unsafe.Pointer(pa))
+			return unsafe.Pointer(pu + aOff)
+		}
+		tot += pa.size
+	}
+	return nil
+}
+
+func (ph *pHeader) setSwizzleState(state int) {
+	ph.swizzleState = state
+	PersistRange(unsafe.Pointer(&ph.swizzleState), intSize)
+}
+
+// Find which arena index would have contained pointer x
+func findArenaIndex(x uintptr, rangeTable []tuple) int {
+	for i, t := range rangeTable {
+		if x >= t.s && x < t.e {
+			return i
+		}
+	}
+	return -1
 }
