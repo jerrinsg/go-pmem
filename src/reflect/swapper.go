@@ -62,7 +62,7 @@ func Swapper(slice interface{}) func(i, j int) {
 	}
 
 	s := (*unsafeheader.Slice)(v.ptr)
-	tmp := unsafe_New(typ) // swap scratch space
+	tmp := unsafe_New(typ, isNotPersistent) // swap scratch space
 
 	return func(i, j int) {
 		if uint(i) >= uint(s.Len) || uint(j) >= uint(s.Len) {
