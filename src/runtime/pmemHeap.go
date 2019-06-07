@@ -31,6 +31,14 @@ const (
 	// and volatile memory.
 	maxMemTypes = 2
 
+	// The maximum span class of a small span
+	maxSmallSpanclass = 133
+
+	// The maximum value that will logged in span bitmap corresponding to a small span.
+	// This is when the spanclass of the span is 133 and its needzero parameter
+	// is 1.
+	maxSmallSpanLogVal = (maxSmallSpanclass << 1) + 1
+
 	// The effective permission of the created persistent memory file is
 	// (mode & ~umask) where umask is the system wide umask.
 	_DEFAULT_FMODE = 0666
@@ -307,6 +315,86 @@ func unmapHeader() {
 // recreates spans one by one. For each recreated span, it copies the heap type
 // bits from the persistent memory arena header to the runtime arena datastructure.
 func (ar *arenaInfo) reconstruct() {
+	h := &mheap_
+	pa := ar.pa
+	mdata, allocSize := pa.layout()
+	allocPages := allocSize >> pageShift
+	spanBase := ar.mapAddr + mdata
+
+	// We need to add the space occupied by the common persistent memory header
+	// for the first arena.
+	var off uintptr
+	if pa.fileOffset == 0 {
+		off = pmemHeaderSize
+	}
+
+	// Compute the address of the span bitmap within the arena header.
+	typeEntries := allocSize / bytesPerBitmapByte
+	typeBitsAddr := ar.mapAddr + off + pArenaHeaderSize
+	spanBitsAddr := unsafe.Pointer(typeBitsAddr + typeEntries)
+	spanBitmap := (*(*[1 << 28]uint32)(spanBitsAddr))[:allocPages]
+
+	// Iterate over the span bitmap log and recreate spans one by one
+	var i, j uintptr
+	for i < allocPages {
+		sval := spanBitmap[i]
+		addr := spanBase + (i << pageShift)
+		if sval == 0 {
+			for j = i + 1; j < allocPages; j++ {
+				if spanBitmap[j] != 0 {
+					break
+				}
+			}
+			npages := (j - i)
+			lock(&h.lock)
+			freeSpan(npages, addr, 1, (uintptr)(unsafe.Pointer(pa)))
+			unlock(&h.lock)
+			i += npages
+		} else {
+			s := createSpan(sval, addr)
+			s.pArena = (uintptr)(unsafe.Pointer(pa))
+			ar.restoreSpanHeapBits(s)
+			i += s.npages
+		}
+	}
+}
+
+// createSpan figures out the properties of the span to be reconstructed such as
+// spanclass, number of pages, the needzero value, etc. and calls the core
+// reconstruction function createSpanCore.
+func createSpan(sVal uint32, baseAddr uintptr) *mspan {
+	var npages uintptr
+	var spc spanClass
+	large := false
+	needzero := ((sVal & 1) == 1)
+	if sVal > maxSmallSpanLogVal { // large allocation
+		large = true
+		noscan := ((sVal >> 1 & 1) == 1)
+		npages = uintptr((sVal >> 2) - 66 + 4)
+		spc = makeSpanClass(0, noscan)
+	} else {
+		npages = uintptr(class_to_allocnpages[sVal>>2])
+		spc = spanClass(sVal >> 1)
+	}
+	return createSpanCore(spc, baseAddr, npages, large, needzero)
+}
+
+// createSpanCore creates a span corresponding to memory region beginning at
+// address 'base' and containing 'npages' number of pages. It first searches the
+// mheap free list/treap to find a large span to carve this span from. It then
+// trims out any unnecessary regions from the span obtained from the search, sets
+// the necessary metadata for the span, and restores the heap type bit information
+// for this span.
+func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *mspan {
+	// TODO
+	return nil
+}
+
+// freeSpan() is used to put back trimmed out regions of a span back into the
+// memory allocator free list/treap. 'npages' is the number of pages in the trimmed
+// region, and 'base' is its start address.
+// mheap must be locked before calling this function
+func freeSpan(npages, base uintptr, needzero uint8, parena uintptr) {
 	// TODO
 }
 
@@ -355,6 +443,18 @@ func enableGC(gcp int) {
 	setGCPercent(int32(gcp)) // restore GC percentage
 	// Run GC so that unused memory in reconstructed spans are reclaimed
 	go GC()
+}
+
+// Restores the heap type bit information for the reconstructed span 's'.
+// The heap type bits is needed for the GC to identify what regions in the
+// reconstructed span have pointers in them.
+// This function copies the heap type bits that was logged in the persistent
+// memory arena header to the volatile memory arena datastructures that holds
+// the runtime type bits for this span. The volatile type bits for this span
+// may be contained in one or more volatile arenas. Therefore, this function
+// copies the heap type bits in a per volatile-memory arena manner.
+func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
+	// TODO
 }
 
 func swizzleArenas(arenas []*arenaInfo) (err error) {
