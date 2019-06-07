@@ -783,5 +783,105 @@ func findArenaIndex(x uintptr, rangeTable []tuple) int {
 // Swizzle arena pa. skip is the number of bytes in the beginning of the arena
 // that has to be skipped for swizzling.
 func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool) {
-	// TODO
+	pa := ar.pa
+	mdata, allocSize := pa.layout()
+
+	// The start address of the allocator managed space in this arena
+	start := ar.mapAddr + mdata
+
+	for done := pa.bytesSwizzled; done < allocSize; {
+		addr := start + done
+
+		// TODO XXX jerrin
+		s := spanOfHeap(addr)
+		var end uintptr
+		if s == nil {
+			end = addr + 8192
+			rem := (end - addr)
+			done += rem
+			continue
+		}
+
+		end = s.base() + (s.npages << pageShift)
+
+		// This span is not in-use. Hence no pointers within the span need to
+		// be swizzled.
+		if s.state.get() != mSpanInUse {
+			rem := (end - addr)
+			done += rem
+			continue
+		}
+
+		// The swizzling function may have been called to complete a previously
+		// partially executed swizzling. Compute the element index and the object
+		// offset from which swizzling should be started.
+		n := s.elemsize
+		ei := (addr - s.base()) / s.elemsize // element index
+		ob := s.base() + (ei * s.elemsize)   // object base address
+		oo := (addr - ob)                    // offset within the object
+
+		i := oo
+		// j loop iterates over each element in the span and i loop iterates over
+		// each 8-byte region in the object.
+		for j := ei; j < s.nelems; j++ {
+			addr = s.base() + (j * n) + (i)
+			hbits := heapBitsForAddr(addr)
+			is := i
+
+			for ; i < n; i += 8 {
+				if i != is {
+					// skip advancing hbits and addr in the first iteration
+					hbits = hbits.next()
+					addr += 8
+				}
+				bits := hbits.bits()
+				if i != 1*8 && bits&bitScan == 0 {
+					break // no more pointers in this object
+				}
+				if bits&bitPointer == 0 {
+					continue // not a pointer
+				}
+
+				au := (*uintptr)(unsafe.Pointer(addr))
+				if *au == 0 {
+					continue
+				}
+				newAddr := swizzlePointer(*au, offsetTable, rangeTable)
+				if newAddr == *au {
+					// The swizzled address is the same as the current address.
+					// Skip writing this.
+					continue
+				}
+
+				pa.logEntry(unsafe.Pointer(&pa.bytesSwizzled))
+				pa.logEntry(unsafe.Pointer(addr))
+
+				pa.bytesSwizzled = (addr - start + 8)
+				*au = newAddr
+
+				// Commit persists the changes and then resets the log
+				pa.commitLog()
+			}
+			i = 0
+		}
+		done = (end - start)
+	}
+
+	pa.bytesSwizzled = allocSize
+	PersistRange(unsafe.Pointer(&pa.bytesSwizzled), intSize)
+	dc <- true
+}
+
+// Given the offset table and the range table, swizzlePointer() computes the
+// swizzled pointer address correspondong to 'ptr'.
+func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr {
+	// If findArenaIndex() returns -1, it indicates that 'ptr' is not a
+	// valid persistent memory address. Hence return 0.
+	ind := findArenaIndex(ptr, rangeTable)
+	if ind == -1 {
+		return 0
+	}
+
+	off := offsetTable[ind]
+	return uintptr(int(ptr) + off)
 }
