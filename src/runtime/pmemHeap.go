@@ -205,14 +205,16 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 			return nil, err
 		}
 	}
-	// TODO - Set persistent memory as initialized
+
+	// Set persistent memory as initialized
+	atomic.Store(&pmemInfo.initState, initDone)
 
 	if !firstInit {
 		// Enable garbage collection
 		enableGC(gcp)
 	}
 
-	return nil, error(errorString("Persistent memory initialization not fully supported"))
+	return pmemInfo.root, nil
 }
 
 // Arena information structure which will be used during reconstruction and
@@ -707,7 +709,7 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 	}
 
 	// Set swizzle state as swizzleDone
-	// TODO
+	pmemHeader.setSwizzleState(swizzleDone)
 
 	for _, ar := range arenas {
 		pa := ar.pa
