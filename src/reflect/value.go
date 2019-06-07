@@ -115,7 +115,7 @@ func packEface(v Value) interface{} {
 		if v.flag&flagAddr != 0 {
 			// TODO: pass safe boolean from valueInterface so
 			// we don't need to copy if safe==true?
-			c := unsafe_New(t)
+			c := unsafe_New(t, isNotPersistent)
 			typedmemmove(t, c, ptr)
 			ptr = c
 		}
@@ -411,7 +411,7 @@ func (v Value) call(op string, in []Value) []Value {
 	} else {
 		// Can't use pool if the function has return values.
 		// We will leak pointer to args in ret, so its lifetime is not scoped.
-		args = unsafe_New(frametype)
+		args = unsafe_New(frametype, isNotPersistent)
 	}
 	off := uintptr(0)
 
@@ -520,7 +520,7 @@ func callReflect(ctxt *makeFuncImpl, frame unsafe.Pointer, retValid *bool) {
 			// Must make a copy, because f might keep a reference to it,
 			// and we cannot let f keep a reference to the stack frame
 			// after this function returns, not even a read-only reference.
-			v.ptr = unsafe_New(typ)
+			v.ptr = unsafe_New(typ, isNotPersistent)
 			if typ.size > 0 {
 				typedmemmove(typ, v.ptr, add(ptr, off, "typ.size > 0"))
 			}
@@ -1229,7 +1229,7 @@ func copyVal(typ *rtype, fl flag, ptr unsafe.Pointer) Value {
 	if ifaceIndir(typ) {
 		// Copy result so future changes to the map
 		// won't change the underlying value.
-		c := unsafe_New(typ)
+		c := unsafe_New(typ, isNotPersistent)
 		typedmemmove(typ, c, ptr)
 		return Value{typ, c, fl | flagIndir}
 	}
@@ -1420,7 +1420,7 @@ func (v Value) recv(nb bool) (val Value, ok bool) {
 	val = Value{t, nil, flag(t.Kind())}
 	var p unsafe.Pointer
 	if ifaceIndir(t) {
-		p = unsafe_New(t)
+		p = unsafe_New(t, isNotPersistent)
 		val.ptr = p
 		val.flag |= flagIndir
 	} else {
@@ -1929,7 +1929,9 @@ func arrayAt(p unsafe.Pointer, i int, eltSize uintptr, whySafe string) unsafe.Po
 
 // grow grows the slice s so that it can hold extra more values, allocating
 // more capacity if needed. It also returns the old and new slice lengths.
-func grow(s Value, extra int) (Value, int, int) {
+// If s needs to be expanded, then memtype specifies whether memory should be
+// allocated from persistent memory or volatile memory.
+func grow(s Value, extra, memtype int) (Value, int, int) {
 	i0 := s.Len()
 	i1 := i0 + extra
 	if i1 < i0 {
@@ -1950,7 +1952,12 @@ func grow(s Value, extra int) (Value, int, int) {
 			}
 		}
 	}
-	t := MakeSlice(s.Type(), i1, m)
+	var t Value
+	if memtype == isPersistent {
+		t = PMakeSlice(s.Type(), i1, m)
+	} else {
+		t = MakeSlice(s.Type(), i1, m)
+	}
 	Copy(t, s)
 	return t, i0, i1
 }
@@ -1959,22 +1966,37 @@ func grow(s Value, extra int) (Value, int, int) {
 // As in Go, each x's value must be assignable to the slice's element type.
 func Append(s Value, x ...Value) Value {
 	s.mustBe(Slice)
-	s, i0, i1 := grow(s, len(x))
+	s, i0, i1 := grow(s, len(x), isNotPersistent)
 	for i, j := i0, 0; i < i1; i, j = i+1, j+1 {
 		s.Index(i).Set(x[j])
 	}
 	return s
 }
 
-// AppendSlice appends a slice t to a slice s and returns the resulting slice.
-// The slices s and t must have the same element type.
-func AppendSlice(s, t Value) Value {
+func appendSliceCore(s, t Value, memtype int) Value {
 	s.mustBe(Slice)
 	t.mustBe(Slice)
 	typesMustMatch("reflect.AppendSlice", s.Type().Elem(), t.Type().Elem())
-	s, i0, i1 := grow(s, t.Len())
+	if memtype == isPersistent {
+		sh := (*sliceHeader)(s.ptr)
+		if !runtime.InPmem(uintptr(sh.Data)) {
+			panic("Invalid append slice - slice not in persistent memory")
+		}
+	}
+	s, i0, i1 := grow(s, t.Len(), memtype)
 	Copy(s.Slice(i0, i1), t)
 	return s
+}
+
+// AppendSlice appends a slice t to a slice s and returns the resulting slice.
+// The slices s and t must have the same element type.
+func AppendSlice(s, t Value) Value {
+	return appendSliceCore(s, t, isNotPersistent)
+}
+
+// PAppendSlice is the persistent memory version of AppendSlice()
+func PAppendSlice(s, t Value) Value {
+	return appendSliceCore(s, t, isPersistent)
 }
 
 // Copy copies the contents of src into dst until either
@@ -2158,7 +2180,7 @@ func Select(cases []SelectCase) (chosen int, recv Value, recvOK bool) {
 			}
 			rc.ch = ch.pointer()
 			rc.typ = &tt.rtype
-			rc.val = unsafe_New(tt.elem)
+			rc.val = unsafe_New(tt.elem, isNotPersistent)
 		}
 	}
 
@@ -2182,12 +2204,10 @@ func Select(cases []SelectCase) (chosen int, recv Value, recvOK bool) {
  */
 
 // implemented in package runtime
-func unsafe_New(*rtype) unsafe.Pointer
-func unsafe_NewArray(*rtype, int) unsafe.Pointer
+func unsafe_New(*rtype, int) unsafe.Pointer
+func unsafe_NewArray(*rtype, int, int) unsafe.Pointer
 
-// MakeSlice creates a new zero-initialized slice value
-// for the specified slice type, length, and capacity.
-func MakeSlice(typ Type, len, cap int) Value {
+func makeSliceCore(typ Type, len, cap, memtype int) Value {
 	if typ.Kind() != Slice {
 		panic("reflect.MakeSlice of non-slice type")
 	}
@@ -2201,8 +2221,19 @@ func MakeSlice(typ Type, len, cap int) Value {
 		panic("reflect.MakeSlice: len > cap")
 	}
 
-	s := sliceHeader{unsafe_NewArray(typ.Elem().(*rtype), cap), len, cap}
+	s := sliceHeader{unsafe_NewArray(typ.Elem().(*rtype), cap, memtype), len, cap}
 	return Value{typ.(*rtype), unsafe.Pointer(&s), flagIndir | flag(Slice)}
+}
+
+// MakeSlice creates a new zero-initialized slice value
+// for the specified slice type, length, and capacity.
+func MakeSlice(typ Type, len, cap int) Value {
+	return makeSliceCore(typ, len, cap, isNotPersistent)
+}
+
+// PMakeSlice is the persistent memory version of MakeSlice.
+func PMakeSlice(typ Type, len, cap int) Value {
+	return makeSliceCore(typ, len, cap, isPersistent)
 }
 
 // MakeChan creates a new channel with the specified type and buffer size.
@@ -2275,21 +2306,31 @@ func Zero(typ Type) Value {
 	t := typ.(*rtype)
 	fl := flag(t.Kind())
 	if ifaceIndir(t) {
-		return Value{t, unsafe_New(t), fl | flagIndir}
+		return Value{t, unsafe_New(t, isNotPersistent), fl | flagIndir}
 	}
 	return Value{t, nil, fl}
 }
 
 // New returns a Value representing a pointer to a new zero value
 // for the specified type. That is, the returned Value's Type is PtrTo(typ).
-func New(typ Type) Value {
+func newCore(typ Type, memtype int) Value {
 	if typ == nil {
 		panic("reflect: New(nil)")
 	}
 	t := typ.(*rtype)
-	ptr := unsafe_New(t)
+	ptr := unsafe_New(t, memtype)
 	fl := flag(Ptr)
 	return Value{t.ptrTo(), ptr, fl}
+}
+
+// New allocates the object in volatile memory
+func New(typ Type) Value {
+	return newCore(typ, isNotPersistent)
+}
+
+// PNew allocates the object in persistent memory
+func PNew(typ Type) Value {
+	return newCore(typ, isPersistent)
 }
 
 // NewAt returns a Value representing a pointer to a value of the
@@ -2318,7 +2359,7 @@ func (v Value) assignTo(context string, dst *rtype, target unsafe.Pointer) Value
 
 	case implements(dst, v.typ):
 		if target == nil {
-			target = unsafe_New(dst)
+			target = unsafe_New(dst, isNotPersistent)
 		}
 		if v.Kind() == Interface && v.IsNil() {
 			// A nil ReadWriter passed to nil Reader is OK,
@@ -2440,7 +2481,7 @@ func convertOp(dst, src *rtype) func(Value, Type) Value {
 // where t is a signed or unsigned int type.
 func makeInt(f flag, bits uint64, t Type) Value {
 	typ := t.common()
-	ptr := unsafe_New(typ)
+	ptr := unsafe_New(typ, isNotPersistent)
 	switch typ.size {
 	case 1:
 		*(*uint8)(ptr) = uint8(bits)
@@ -2458,7 +2499,7 @@ func makeInt(f flag, bits uint64, t Type) Value {
 // where t is a float32 or float64 type.
 func makeFloat(f flag, v float64, t Type) Value {
 	typ := t.common()
-	ptr := unsafe_New(typ)
+	ptr := unsafe_New(typ, isNotPersistent)
 	switch typ.size {
 	case 4:
 		*(*float32)(ptr) = float32(v)
@@ -2472,7 +2513,7 @@ func makeFloat(f flag, v float64, t Type) Value {
 // where t is a complex64 or complex128 type.
 func makeComplex(f flag, v complex128, t Type) Value {
 	typ := t.common()
-	ptr := unsafe_New(typ)
+	ptr := unsafe_New(typ, isNotPersistent)
 	switch typ.size {
 	case 8:
 		*(*complex64)(ptr) = complex64(v)
@@ -2585,7 +2626,7 @@ func cvtDirect(v Value, typ Type) Value {
 	ptr := v.ptr
 	if f&flagAddr != 0 {
 		// indirect, mutable word - make a copy
-		c := unsafe_New(t)
+		c := unsafe_New(t, isNotPersistent)
 		typedmemmove(t, c, ptr)
 		ptr = c
 		f &^= flagAddr
@@ -2595,7 +2636,7 @@ func cvtDirect(v Value, typ Type) Value {
 
 // convertOp: concrete -> interface
 func cvtT2I(v Value, typ Type) Value {
-	target := unsafe_New(typ.common())
+	target := unsafe_New(typ.common(), isNotPersistent)
 	x := valueInterface(v, false)
 	if typ.NumMethod() == 0 {
 		*(*interface{})(target) = x

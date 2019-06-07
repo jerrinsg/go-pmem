@@ -24,6 +24,11 @@ import (
 	"unsafe"
 )
 
+const (
+	isNotPersistent = 0
+	isPersistent    = 1
+)
+
 // Type is the representation of a Go type.
 //
 // Not all methods apply to all kinds of types. Restrictions,
@@ -3098,7 +3103,7 @@ func funcLayout(t *funcType, rcvr *rtype) (frametype *rtype, argSize, retOffset 
 
 	// cache result for future callers
 	framePool = &sync.Pool{New: func() interface{} {
-		return unsafe_New(x)
+		return unsafe_New(x, isNotPersistent)
 	}}
 	lti, _ := layoutCache.LoadOrStore(k, layoutType{
 		t:         x,

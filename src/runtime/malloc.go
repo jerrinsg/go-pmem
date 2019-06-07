@@ -1146,8 +1146,8 @@ func pnewobject(typ *_type) unsafe.Pointer {
 }
 
 //go:linkname reflect_unsafe_New reflect.unsafe_New
-func reflect_unsafe_New(typ *_type) unsafe.Pointer {
-	return mallocgc(typ.size, typ, needZeroed, isNotPersistent)
+func reflect_unsafe_New(typ *_type, memtype int) unsafe.Pointer {
+	return mallocgc(typ.size, typ, needZeroed, memtype)
 }
 
 // newarray allocates an array of n elements of type typ.
@@ -1163,8 +1163,8 @@ func newarray(typ *_type, n, memtype int) unsafe.Pointer {
 }
 
 //go:linkname reflect_unsafe_NewArray reflect.unsafe_NewArray
-func reflect_unsafe_NewArray(typ *_type, n int) unsafe.Pointer {
-	return newarray(typ, n, isNotPersistent)
+func reflect_unsafe_NewArray(typ *_type, n, memtype int) unsafe.Pointer {
+	return newarray(typ, n, memtype)
 }
 
 func profilealloc(mp *m, x unsafe.Pointer, size uintptr) {
