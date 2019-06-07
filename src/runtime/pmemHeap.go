@@ -380,14 +380,102 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 }
 
 // createSpanCore creates a span corresponding to memory region beginning at
-// address 'base' and containing 'npages' number of pages. It first searches the
-// mheap free list/treap to find a large span to carve this span from. It then
-// trims out any unnecessary regions from the span obtained from the search, sets
-// the necessary metadata for the span, and restores the heap type bit information
-// for this span.
+// address 'base' and containing 'npages' number of pages. It sets the necessary
+// metadata for the span, adds the span in the appropriate memory allocator list
+// and also adds it in the sweepSpans datastructure so that this span would be
+// swept in the next complete GC cycle.
 func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *mspan {
-	// TODO
-	return nil
+	h := &mheap_
+
+	s := (*mspan)(h.spanalloc.alloc())
+	s.init(base, npages)
+	// Initialize other metadata of s
+	s.state = mSpanInUse
+	s.memtype = isPersistent
+	s.spanclass = spc
+
+	// copying span initialization code from alloc_m() in mheap.go
+	if sizeclass := spc.sizeclass(); sizeclass == 0 { // indicates a large span
+		s.elemsize = s.npages << pageShift
+		s.divShift = 0
+		s.divMul = 0
+		s.divShift2 = 0
+		s.baseMask = 0
+	} else {
+		s.elemsize = uintptr(class_to_size[sizeclass])
+		m := &class_to_divmagic[sizeclass]
+		s.divShift = m.shift
+		s.divMul = m.mul
+		s.divShift2 = m.shift2
+		s.baseMask = m.baseMask
+	}
+
+	// Mark in-use span in arena page bitmap.
+	arena, pageIdx, pageMask := pageIndexOf(s.base())
+	arena.pageInUse[pageIdx] |= pageMask
+
+	s.needzero = uint8(bool2int(needzero))
+
+	if large == false {
+		size := uintptr(class_to_size[spc.sizeclass()])
+		n := (npages << pageShift) / size
+		s.limit = s.base() + size*n
+	} else {
+		s.limit = s.base() + (npages << pageShift)
+	}
+
+	_, ln, _ := s.layout()
+
+	// During reconstruction, we mark the span as being completely used. This is
+	// done by setting the allocCount and freeindex as the number of elements in
+	// the span, and allocCache as 0 (allocCache holds the complement of allocBits).
+	// The expectation is that GC will later do the required cleanup.
+
+	// copying code block from initSpan() here
+	// Init the markbit structures
+	s.nelems = ln
+	s.allocCount = uint16(ln) // set span as being fully allocated
+	s.freeindex = ln
+	s.allocCache = 0 // all 0s indicating all objects in the span are in-use
+	s.allocBits = newAllocBits(s.nelems)
+	s.gcmarkBits = newMarkBits(s.nelems)
+
+	h.setSpans(s.base(), s.npages, s)
+
+	// Put span s in the appropriate memory allocator list
+	lock(&h.lock)
+	if large {
+		h.free[isPersistent].insert(s)
+	} else {
+		// In-use and empty (no free objects) small spans are stored in the empty
+		// list in mcentral. Since the span is empty, it will not be cached in
+		// mcache.
+		c := &mheap_.central[isPersistent][spc].mcentral
+		lock(&c.lock)
+		c.empty.insertBack(s)
+		unlock(&c.lock)
+	}
+
+	// Set the sweep generation(SG) of the reconstructed span as the global SG.
+	// Global SG will not change during the reconstruction process as GC is
+	// disabled.
+	s.sweepgen = h.sweepgen
+
+	// From mheap.go: sweepSpans contains two mspan stacks: one of swept in-use
+	// spans, and one of unswept in-use spans. These two trade roles on each GC
+	// cycle. Since the sweepgen increases by 2 on each cycle, this means the
+	// swept spans are in sweepSpans[sweepgen/2%2] and the unswept spans are in
+	// sweepSpans[1-sweepgen/2%2]. Sweeping pops spans from the unswept stack
+	// and pushes spans that are still in-use on the swept stack. Likewise,
+	// allocating an in-use span pushes it  on the swept stack.
+
+	// Place the reconstructed spans in the swept in-use stack of sweepSpans.
+	// During the next full GC cycle, these spans would all be considered to be
+	// unswept, and will be swept by the GC.
+	h.sweepSpans[(h.sweepgen / 2 % 2)].push(s)
+	unlock(&h.lock)
+
+	return s
 }
 
 // freeSpan() is used to put back trimmed out regions of a span back into the
