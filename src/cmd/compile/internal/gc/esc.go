@@ -910,6 +910,12 @@ opSwitch:
 	case OAS2: // x,y = a,b
 		if n.List.Len() == n.Rlist.Len() {
 			rs := n.Rlist.Slice()
+			if flag_txn && n.IsInjectedTxStmt() {
+				for i := range rs {
+					addrescapesFromTxn(n.List.Index(i), e, "used on lhs of assignment within txn() block")
+					addrescapesFromTxn(n.Rlist.Index(i), e, "used on rhs of assignment within txn() block")
+				}
+			}
 			where := n
 			for i, n := range n.List.Slice() {
 				e.escassignWhyWhere(n, rs[i], "assign-pair", where)
