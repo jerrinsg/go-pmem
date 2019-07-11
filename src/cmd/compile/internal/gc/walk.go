@@ -211,7 +211,7 @@ func walkstmt(n *Node) *Node {
 			return walkstmt(nn)
 		}
 
-	case OBLOCK:
+	case OBLOCK, OTXBLOCK:
 		walkstmtlist(n.List.Slice())
 
 	case OXCASE:
@@ -719,12 +719,6 @@ opswitch:
 		walkexprlistsafe(n.Rlist.Slice(), init)
 		ll := ascompatee(OAS, n.List.Slice(), n.Rlist.Slice(), init)
 		ll = reorder3(ll)
-		if flag_txn && n.IsInjectedTxStmt() {
-			for _, s := range ll {
-				s.SetInjectedTxStmt(true)
-			}
-		}
-
 		n = liststmt(ll)
 
 	// a,b,... = fn()
