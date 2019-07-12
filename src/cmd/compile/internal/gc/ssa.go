@@ -4415,10 +4415,8 @@ func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) 
 	off += arg.Type.Size()
 
 	off = Rnd(off, int64(Widthreg))
-
 	call := s.newValue2(ssa.OpInterCall, types.TypeMem, codeptr, s.mem())
 	// Remember how much callee stack space we needed.
-	call.AuxInt = off
 	s.vars[&memVar] = call
 	return call, off
 }
@@ -4538,7 +4536,10 @@ func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
 	// set up call to Log method of transaction interface
 	txLog := typecheck(txLogFn.Left, Ecall) // txLog = txn.Log, not the function call
 	fnOffset := txLog.Xoffset
-	s.txnIntfCall(fnOffset, arg)
+	dowidth(txLog.Type)
+	stksize := txLog.Type.ArgWidth()
+	call, _ := s.txnIntfCall(fnOffset, arg)
+	call.AuxInt = stksize
 	// Assumed no results
 	return nil
 }
