@@ -975,9 +975,6 @@ loop:
 			p.xnest--
 
 		case _Lparen:
-			if p.inTxBlock {
-				p.syntaxError("go-pmem unexpected function call within transaction")
-			}
 			t := new(CallExpr)
 			t.pos = pos
 			t.Fun = x
