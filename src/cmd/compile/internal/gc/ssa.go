@@ -4225,6 +4225,9 @@ func markNodeForTxLog(n *Node) {
 // Cases which set the InjectedTxReadLog flag of Node, need to be handled
 // explicitly in *state.expr method
 func markNodeForTxReadLog(n *Node) {
+	// TODO: (mohitv) Disable marking nodes for ReadLog instrumentation
+	// This would result in redo logging not working correctly
+	return
 	switch n.Op {
 	case OLITERAL, OSTRUCTLIT, OARRAYLIT, OSLICELIT:
 		// do nothing
