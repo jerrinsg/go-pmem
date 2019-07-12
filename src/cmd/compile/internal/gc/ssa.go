@@ -377,7 +377,8 @@ type state struct {
 
 	// store transaction interface's ssa.Value to be used for injecting Log()
 	// & ReadLog() calls during buildssa
-	txIntf *ssa.Value
+	txIntf    *ssa.Value
+	inTxBlock bool
 }
 
 type funcLine struct {
@@ -739,33 +740,69 @@ func (s *state) rawLoad(t *types.Type, src *ssa.Value) *ssa.Value {
 
 func (s *state) store(t *types.Type, dst, val *ssa.Value) {
 	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		s.txnLog(dst, val)
-	} else {
-		s.vars[&memVar] = s.newValue3A(ssa.OpStore, types.TypeMem, t, dst, val, s.mem())
+		nextB := s.checkInPmem(dst, val)
+		dst.StoreWithinTx = false
+		s.storeOrig(t, dst, val)
+		currB := s.endBlock()
+		if currB == nil {
+			panic("[ssa.go] *state.store(): ssa.Block is nil")
+		}
+		currB.AddEdgeTo(nextB)
+		s.startBlock(nextB)
+		return
 	}
+	s.storeOrig(t, dst, val)
+}
+
+func (s *state) storeOrig(t *types.Type, dst, val *ssa.Value) {
+	s.vars[&memVar] = s.newValue3A(ssa.OpStore, types.TypeMem, t, dst, val, s.mem())
 }
 
 func (s *state) zero(t *types.Type, dst *ssa.Value) {
 	s.instrument(t, dst, true)
 	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		s.txnLog(dst, s.constInt(types.Types[TINT], 0))
-	} else {
-		store := s.newValue2I(ssa.OpZero, types.TypeMem, t.Size(), dst, s.mem())
-		store.Aux = t
-		s.vars[&memVar] = store
+		nextB := s.checkInPmem(dst, s.constInt(types.Types[TINT], 0))
+		dst.StoreWithinTx = false
+		s.zeroOrig(t, dst)
+		currB := s.endBlock()
+		if currB == nil {
+			panic("[ssa.go] *state.zero(): ssa.Block is nil")
+		}
+		currB.AddEdgeTo(nextB)
+		s.startBlock(nextB)
+		return
 	}
+	s.zeroOrig(t, dst)
+}
+
+func (s *state) zeroOrig(t *types.Type, dst *ssa.Value) {
+	store := s.newValue2I(ssa.OpZero, types.TypeMem, t.Size(), dst, s.mem())
+	store.Aux = t
+	s.vars[&memVar] = store
 }
 
 func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 	s.instrument(t, src, false)
 	s.instrument(t, dst, true)
 	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		s.txnLog(dst, src)
-	} else {
-		store := s.newValue3I(ssa.OpMove, types.TypeMem, t.Size(), dst, src, s.mem())
-		store.Aux = t
-		s.vars[&memVar] = store
+		nextB := s.checkInPmem(dst, src)
+		dst.StoreWithinTx = false
+		s.moveOrig(t, dst, src)
+		currB := s.endBlock()
+		if currB == nil {
+			panic("[ssa.go] *state.move(): ssa.Block is nil")
+		}
+		currB.AddEdgeTo(nextB)
+		s.startBlock(nextB)
+		return
 	}
+	s.moveOrig(t, dst, src)
+}
+
+func (s *state) moveOrig(t *types.Type, dst, src *ssa.Value) {
+	store := s.newValue3I(ssa.OpMove, types.TypeMem, t.Size(), dst, src, s.mem())
+	store.Aux = t
+	s.vars[&memVar] = store
 }
 
 // stmtList converts the statement list n to SSA and adds it to s.
@@ -794,7 +831,10 @@ func (s *state) stmt(n *Node) {
 
 	case OBLOCK:
 		s.stmtList(n.List)
-
+	case OTXBLOCK:
+		s.inTxBlock = true
+		s.stmtList(n.List)
+		s.inTxBlock = false
 	// No-ops
 	case OEMPTY, ODCLCONST, ODCLTYPE, OFALL:
 
@@ -909,13 +949,11 @@ func (s *state) stmt(n *Node) {
 			return
 		}
 
-		if flag_txn && n.IsInjectedTxStmt() {
-			if !n.Left.IsAutoTmp() {
+		if flag_txn && s.inTxBlock {
+			if !n.Colas() {
 				markNodeForTxLog(n.Left)
 			}
-			if !n.Right.IsAutoTmp() {
-				markNodeForTxReadLog(n.Right)
-			}
+			markNodeForTxReadLog(n.Right)
 		}
 
 		// Evaluate RHS.
@@ -2613,6 +2651,9 @@ func (s *state) append(n *Node, inplace bool) *ssa.Value {
 // This function is intended to handle && and || better than just calling
 // s.expr(cond) and branching on the result.
 func (s *state) condBranch(cond *Node, yes, no *ssa.Block, likely int8) {
+	if flag_txn && s.inTxBlock {
+		markNodeForTxReadLog(cond)
+	}
 	switch cond.Op {
 	case OANDAND:
 		mid := s.f.NewBlock(ssa.BlockPlain)
@@ -4187,8 +4228,6 @@ func (s *state) rtcall(fn *obj.LSym, returns bool, results []*types.Type, args .
 // the variable is a stack arg passed from a calling function, this method is not
 // reliable. This can be fixed if lookup is done across functions, something
 // similar to what is done in escape analysis.
-// With forced escape for variables on either side of assignments within
-// transaction, this function is not needed.
 func (s *state) isAllocatedOnStack(v *ssa.Value) bool {
 	for v.Op == ssa.OpOffPtr || v.Op == ssa.OpAddPtr || v.Op == ssa.OpPtrIndex || v.Op == ssa.OpCopy {
 		v = v.Args[0]
@@ -4215,6 +4254,9 @@ func (s *state) isAllocatedOnStack(v *ssa.Value) bool {
 }
 
 func markNodeForTxLog(n *Node) {
+	if n == nil || n.IsAutoTmp() {
+		return
+	}
 	n.SetInjectedTxStmt(true)
 	if n.Op == OINDEX {
 		markNodeForTxReadLog(n.Left)
@@ -4228,6 +4270,9 @@ func markNodeForTxReadLog(n *Node) {
 	// TODO: (mohitv) Disable marking nodes for ReadLog instrumentation
 	// This would result in redo logging not working correctly
 	return
+	if n == nil || n.IsAutoTmp() {
+		return
+	}
 	switch n.Op {
 	case OLITERAL, OSTRUCTLIT, OARRAYLIT, OSLICELIT:
 		// do nothing
@@ -4264,6 +4309,38 @@ func markNodeForTxReadLog(n *Node) {
 	default:
 		panic(fmt.Sprintf("[ssa.go] op %v", n.Op, "not supported on rhs of assignments within txn"))
 	}
+}
+
+// Parts of the implementation are taken from *state.stmt() method's OIF case
+// and *state.condBranch() method.
+func (s *state) checkInPmem(left, right *ssa.Value) *ssa.Block {
+	fn := sysfunc("inpmem")
+	r := s.rtcall(fn, true, []*types.Type{types.Types[TBOOL]}, left)
+	pmem := r[0]
+	likely := int8(1)
+	bThen := s.f.NewBlock(ssa.BlockPlain)
+	bElse := s.f.NewBlock(ssa.BlockPlain)
+	bEnd := s.f.NewBlock(ssa.BlockPlain)
+
+	b := s.endBlock()
+	b.Kind = ssa.BlockIf
+	b.SetControl(pmem)
+	b.Likely = ssa.BranchPrediction(likely) // set Then block as likely
+	b.AddEdgeTo(bThen)                      // yes branch
+	b.AddEdgeTo(bElse)                      // no branch
+
+	s.startBlock(bThen)
+	// code for txnLog method
+	s.txnLog(left, right)
+	b = s.endBlock()
+	if b == nil {
+		panic("[ssa.go] *state.checkInPmem(): ssa.Block is nil")
+	}
+	b.AddEdgeTo(bEnd)
+
+	s.startBlock(bElse)
+	// code for store/move/zero should be in the bElse block
+	return bEnd
 }
 
 // Used when preparing args for methods of transaction interface. These args are
@@ -4470,9 +4547,21 @@ func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
 func (s *state) storeType(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	s.instrument(t, left, true)
 	if flag_txn && left.StoreWithinTx && !s.isAllocatedOnStack(left) {
-		s.txnLog(left, right)
+		nextB := s.checkInPmem(left, right)
+		left.StoreWithinTx = false
+		s.storeTypeOrig(t, left, right, skip, leftIsStmt)
+		currB := s.endBlock()
+		if currB == nil {
+			panic("[ssa.go] *state.storeType(): ssa.Block is nil")
+		}
+		currB.AddEdgeTo(nextB)
+		s.startBlock(nextB)
 		return
 	}
+	s.storeTypeOrig(t, left, right, skip, leftIsStmt)
+}
+
+func (s *state) storeTypeOrig(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	if skip == 0 && (!types.Haspointers(t) || ssa.IsStackAddr(left)) {
 		// Known to not have write barrier. Store the whole type.
 		s.vars[&memVar] = s.newValue3Apos(ssa.OpStore, types.TypeMem, t, left, right, s.mem(), leftIsStmt)

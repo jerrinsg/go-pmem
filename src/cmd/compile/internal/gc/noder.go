@@ -1084,19 +1084,12 @@ func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
 	}
 	// mark tx.Begin() call to be recognized later during buildssa phase
 	nodes[len(nodes)-1].SetInjectedTxStmt(true)
+
 	p.openScope(txB.B.Pos())
-	for _, s := range txB.B.List {
-		if _, ok := s.(*syntax.AssignStmt); ok {
-			n := p.stmt(s)
-			n.SetInjectedTxStmt(true)
-			nodes = append(nodes, n)
-		} else {
-			sList := []syntax.Stmt{s}
-			n := p.stmts(sList)
-			nodes = append(nodes, n...)
-		}
-	}
+	txBody := p.stmts(txB.B.List)
 	p.closeScope(txB.B.Rbrace)
+	nodes = append(nodes, txliststmt(txBody))
+
 	nodes = append(nodes, p.stmts(txB.Post)...)
 	if txLogFn == nil || txReadLogFn == nil {
 		// Random function calls to populate transaction interface table
