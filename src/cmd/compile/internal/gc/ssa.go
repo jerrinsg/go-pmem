@@ -4273,6 +4273,7 @@ func (s *state) txnCallPrepareArg(arg, sl, argNum *ssa.Value) {
 	intfPtrType := types.NewPtr(types.Types[TINTER])
 	byteptr := s.f.Config.Types.BytePtr
 	var runtimeTypeConvFn *obj.LSym
+	var i *ssa.Value
 	switch {
 	case argType.Size() == 2 && argType.Align == 2:
 		runtimeTypeConvFn = sysfunc("convT2E16")
@@ -4286,12 +4287,19 @@ func (s *state) txnCallPrepareArg(arg, sl, argNum *ssa.Value) {
 		runtimeTypeConvFn = sysfunc("convT2Eslice")
 	case !types.Haspointers(argType):
 		runtimeTypeConvFn = sysfunc("convT2Enoptr")
+	case types.Haspointers(argType):
+		i = s.newValue2(ssa.OpIMake, types.Types[TINTER], s.expr(typeNameNode), arg)
+	case arg.Op == ssa.OpConst64: // Most probably a nil value. We will create
+		// empty interface in this case & not call runtime.convT2E
+		i = s.constInterface(arg.Type)
 	default:
 		runtimeTypeConvFn = sysfunc("convT2E")
 	}
 
-	intf := s.rtcall(runtimeTypeConvFn, true, []*types.Type{types.Types[TINTER]}, s.expr(typeNameNode), arg)
-	i := intf[0]
+	if runtimeTypeConvFn != nil {
+		intf := s.rtcall(runtimeTypeConvFn, true, []*types.Type{types.Types[TINTER]}, s.expr(typeNameNode), arg)
+		i = intf[0]
+	}
 	p := s.newValue2(ssa.OpPtrIndex, intfPtrType, sl, argNum)
 	itab := s.newValue1(ssa.OpITab, byteptr, i)
 	s.store(types.Types[TUINTPTR], p, itab)
