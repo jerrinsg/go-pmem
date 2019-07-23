@@ -1078,23 +1078,41 @@ func (p *noder) blockStmt(stmt *syntax.BlockStmt) []*Node {
 func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
 	var nodes []*Node
 	nodes = append(nodes, p.stmts(txB.Pre)...)
+	// mark these nodes to be recognized later during buildssa phase.
+	// buildssa will not create SSA for these nodes. These are still inserted
+	// by parser to avoid unused import error and fill the Context, typesystem
+	// info during compilation
+	for i := range nodes {
+		nodes[i].SetInjectedTxStmt(true)
+	}
 	if txB.Logger == syntax.NullLog {
 		nodes = append(nodes, p.blockStmt(txB.B)...)
 		return nodes
 	}
-	// mark tx.Begin() call to be recognized later during buildssa phase
-	nodes[len(nodes)-1].SetInjectedTxStmt(true)
-
 	p.openScope(txB.B.Pos())
 	txBody := p.stmts(txB.B.List)
 	p.closeScope(txB.B.Rbrace)
-	nodes = append(nodes, txliststmt(txBody))
+	n := txliststmt(txBody)
+	if txB.Logger == syntax.RedoLog {
+		// use aux field of OTXBLOCK ast node to carry info about undo/redo log
+		// aux == 0 -> undo log
+		// aux == 1 -> redo log
+		n.aux = uint8(1)
+	}
+	nodes = append(nodes, n)
 
-	nodes = append(nodes, p.stmts(txB.Post)...)
-	if txLogFn == nil || txReadLogFn == nil {
-		// Random function calls to populate transaction interface table
-		// This is used to get offsets of methods to call during buildssa phase
+	// Random function calls to populate transaction interface table
+	// This is used to get offsets of methods to call during buildssa phase
+	if txBeginFn == nil {
+		txBeginFn = p.getNewNodeFromString("tx.Begin()")
+	}
+	if txEndFn == nil {
+		txEndFn = p.getNewNodeFromString("tx.End()")
+	}
+	if txLogFn == nil {
 		txLogFn = p.getNewNodeFromString("tx.Log(a)")
+	}
+	if txReadLogFn == nil {
 		txReadLogFn = p.getNewNodeFromString("tx.ReadLog(a)")
 	}
 	return nodes

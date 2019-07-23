@@ -2092,11 +2092,6 @@ func (p *parser) txBlockStmt(declTx bool) *TxBlockStmt {
 	p.inTxBlock = true
 	t.B = p.blockStmt("txn block")
 	p.inTxBlock = false
-
-	s = "tx.End()"
-	t.Post = append(t.Post, ParseStmtFromScratch(s))
-	s = "transaction.Release(tx)"
-	t.Post = append(t.Post, ParseStmtFromScratch(s))
 	return t
 }
 

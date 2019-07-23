@@ -340,7 +340,6 @@ type (
 		Pre    []Stmt
 		B      *BlockStmt
 		Logger LogMode
-		Post   []Stmt
 		stmt
 	}
 

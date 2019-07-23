@@ -27,6 +27,7 @@ var ssaCaches []ssa.Cache
 var ssaDump string     // early copy of $GOSSAFUNC; the func name to dump output for
 var ssaDumpStdout bool // whether to dump to stdout
 const ssaDumpFile = "ssa.html"
+const txnPkgPath = "github.com/vmware/go-pmem-transaction/"
 
 // ssaDumpInlined holds all inlined functions when ssaDump contains a function name.
 var ssaDumpInlined []*Node
@@ -808,6 +809,12 @@ func (s *state) moveOrig(t *types.Type, dst, src *ssa.Value) {
 // stmtList converts the statement list n to SSA and adds it to s.
 func (s *state) stmtList(l Nodes) {
 	for _, n := range l.Slice() {
+		if flag_txn && n.IsInjectedTxStmt() {
+			// These nodes were inserted by syntax/parser.go & marked by
+			// gc/noder.go to fill Context, typesystem info. Don't generate SSA
+			// for these nodes
+			continue
+		}
 		s.stmt(n)
 	}
 }
@@ -832,9 +839,12 @@ func (s *state) stmt(n *Node) {
 	case OBLOCK:
 		s.stmtList(n.List)
 	case OTXBLOCK:
+		// fill tx handle in g
+		s.initTxHandleInG(n.aux)
 		s.inTxBlock = true
 		s.stmtList(n.List)
 		s.inTxBlock = false
+		s.resetTxHandleInG()
 	// No-ops
 	case OEMPTY, ODCLCONST, ODCLTYPE, OFALL:
 
@@ -3785,9 +3795,6 @@ func (s *state) call(n *Node, k callKind) *ssa.Value {
 			Fatalf("OCALLINTER: n.Left not an ODOTINTER: %v", fn.Op)
 		}
 		i := s.expr(fn.Left)
-		if flag_txn && n.IsInjectedTxStmt() {
-			s.txIntf = i // tx.Begin() call, store tx interface
-		}
 		itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], i)
 		s.nilCheck(itab)
 		itabidx := fn.Xoffset + 2*int64(Widthptr) + 8 // offset of fun field in runtime.itab
@@ -4219,6 +4226,148 @@ func (s *state) rtcall(fn *obj.LSym, returns bool, results []*types.Type, args .
 	return res
 }
 
+// If nil, initialize tx handle in the current goroutine.
+// Otherwise retrieve the existing tx handle using runtime.getTxHandle()
+func (s *state) initTxHandleInG(isRedoTx uint8) {
+	// txHandle = runtime.getTxHandle()
+	fn := sysfunc("getTxHandle")
+	r := s.rtcall(fn, true, []*types.Type{types.Types[TUNSAFEPTR]})
+	txHandle := r[0]
+	nilValue := s.constNil(types.Types[TUNSAFEPTR])
+	// if txHandle == nil
+	isTxHandleNil := s.newValue2(ssa.OpEqPtr, types.Types[TBOOL], txHandle, nilValue)
+	likely := int8(-1) // set the case when txHandle==nil as unlikely
+	bThen := s.f.NewBlock(ssa.BlockPlain)
+	bEnd := s.f.NewBlock(ssa.BlockPlain)
+
+	b := s.endBlock()
+	b.Kind = ssa.BlockIf
+	b.SetControl(isTxHandleNil)
+	b.Likely = ssa.BranchPrediction(likely)
+	b.AddEdgeTo(bThen)
+	b.AddEdgeTo(bEnd)
+
+	s.startBlock(bThen)
+	// txHandle is nil, so we are in the "then" block
+
+	// Allocate space to store new tx variable returned by transaction package
+	fn = sysfunc("newobject")
+	r = s.rtcall(fn, true, []*types.Type{types.NewPtr(txType)}, s.expr(typename(txType)))
+	txPtr := r[0]
+
+	// tx = unsafe.Pointer(transaction.NewUndoTx())
+	// *txPtr = tx
+	off := Ctxt.FixedFrameSize()
+	off = Rnd(off, int64(Widthreg))
+	if isRedoTx == uint8(1) {
+		fn = Ctxt.Lookup(txnPkgPath + "transaction.NewRedoTx")
+	} else {
+		fn = Ctxt.Lookup(txnPkgPath + "transaction.NewUndoTx")
+	}
+	call := s.newValue1A(ssa.OpStaticCall, types.TypeMem, fn, s.mem())
+	off = Rnd(off, txType.Alignment())
+	call.AuxInt = txType.Size()
+	s.vars[&memVar] = call
+
+	ptr := s.constOffPtrSP(types.NewPtr(txType), off)
+	txIntf := s.load(txType, ptr)
+
+	itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], txIntf)
+	s.store(types.Types[TUINTPTR], txPtr, itab)
+	idata := s.newValue1(ssa.OpIData, s.f.Config.Types.BytePtr, txIntf)
+	p := s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, txPtr)
+	s.store(s.f.Config.Types.BytePtr, p, idata)
+
+	// txIntfUnsafePtr = (unsafe.Pointer)(txPtr)
+	txIntfUnsafePtr := s.newValue1(ssa.OpCopy, types.Types[TUNSAFEPTR], txPtr)
+
+	// runtime.setTxHandle(txIntfUnsafePtr)
+	fn = sysfunc("setTxHandle")
+	r = s.rtcall(fn, true, []*types.Type{}, txIntfUnsafePtr)
+	b = s.endBlock()
+	if b == nil {
+		panic("[ssa.go] *state.initTxHandleInG(): ssa.Block is nil")
+	}
+	b.AddEdgeTo(bEnd)
+	s.startBlock(bEnd)
+
+	// txIntfUnsafePtr = runtime.getTxHandle()
+	fn = sysfunc("getTxHandle")
+	r = s.rtcall(fn, true, []*types.Type{types.Types[TUNSAFEPTR]})
+	txIntfUnsafePtr = r[0]
+	// txHandle = (*transaction.TX)(txIntfUnsafePtr)
+	txHandle = s.newValue1(ssa.OpCopy, types.NewPtr(txType), txIntfUnsafePtr)
+	// s.TxIntf = *txHandle
+	s.txIntf = s.load(txType, txHandle)
+
+	// code for tx.Begin() goes here
+	txBegin := typecheck(txBeginFn.Left, Ecall)
+	fnOffset := txBegin.Xoffset
+	dowidth(txBegin.Type)
+	call, _ = s.txnIntfCall(fnOffset, nil)
+	call.AuxInt = txBegin.Type.ArgWidth()
+}
+
+// Reset tx handle of the current goroutine to nil if needed, using
+// runtime.setTxHandle(). Else do nothing.
+// If tx.End() returns nil error value, tx handle is set to nil &
+// transaction.Release(tx) is called. If the error returned is non-nil, don't do
+// anything.
+func (s *state) resetTxHandleInG() {
+	// err = tx.End()
+	txEnd := typecheck(txEndFn.Left, Ecall)
+	fnOffset := txEnd.Xoffset
+	call, off := s.txnIntfCall(fnOffset, nil)
+
+	// collect the result which is of type error (interface)
+	intfType := types.Types[TINTER]
+	off = Rnd(off, intfType.Alignment())
+	ptr := s.constOffPtrSP(types.NewPtr(intfType), off)
+	result := s.load(intfType, ptr)
+	off += intfType.Size()
+	off = Rnd(off, int64(Widthptr))
+	call.AuxInt = off
+	nilValue := s.constInterface(types.Types[TINTER])
+	// if err == nil
+	isErrorNil := s.newValue2(ssa.OpEqInter, types.Types[TBOOL], result, nilValue)
+	likely := int8(1)
+	bThen := s.f.NewBlock(ssa.BlockPlain)
+	bEnd := s.f.NewBlock(ssa.BlockPlain)
+
+	b := s.endBlock()
+	b.Kind = ssa.BlockIf
+	b.SetControl(isErrorNil)
+	b.Likely = ssa.BranchPrediction(likely)
+	b.AddEdgeTo(bThen)
+	b.AddEdgeTo(bEnd)
+
+	s.startBlock(bThen)
+	// error returned is nil, so we are in the "then" block
+	// call transaction.Release(tx)
+	off = Ctxt.FixedFrameSize()
+	off = Rnd(off, txType.Alignment())
+	ptr = s.constOffPtrSP(types.NewPtr(txType), off)
+	s.store(txType, ptr, s.txIntf)
+	off += txType.Size()
+	off = Rnd(off, int64(Widthreg))
+	fn := Ctxt.Lookup(txnPkgPath + "transaction.Release")
+	call = s.newValue1A(ssa.OpStaticCall, types.TypeMem, fn, s.mem())
+	call.AuxInt = off
+	s.vars[&memVar] = call
+
+	// reset tx handle in "g"
+	// runtime.setTxHandle(nil)
+	nilValue = s.constNil(types.Types[TUNSAFEPTR])
+	fn = sysfunc("setTxHandle")
+	s.rtcall(fn, true, []*types.Type{}, nilValue)
+	b = s.endBlock()
+	if b == nil {
+		panic("[ssa.go] *state.resetTxHandleInG(): ssa.Block is nil")
+	}
+	b.AddEdgeTo(bEnd)
+	s.startBlock(bEnd)
+}
+
 // isAllocatedOnStack returns whether v is known to be an address
 // derived from (*ssa).IsStackAddr(). If v is still an OpFwdRef, perform
 // a lookup to get a valid definition of v. This is needed because this method
@@ -4410,10 +4559,11 @@ func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) 
 	addr := s.constOffPtrSP(s.f.Config.Types.UintptrPtr, off)
 	s.store(types.Types[TUINTPTR], addr, rcvr)
 	off += types.Types[TUINTPTR].Size()
-	slType := types.NewSlice(types.Types[TINTER])
-	s.store(slType, s.constOffPtrSP(types.NewPtr(slType), off), arg)
-	off += arg.Type.Size()
-
+	if arg != nil {
+		slType := types.NewSlice(types.Types[TINTER])
+		s.store(slType, s.constOffPtrSP(types.NewPtr(slType), off), arg)
+		off += arg.Type.Size()
+	}
 	off = Rnd(off, int64(Widthreg))
 	call := s.newValue2(ssa.OpInterCall, types.TypeMem, codeptr, s.mem())
 	// Remember how much callee stack space we needed.
