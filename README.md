@@ -12,7 +12,7 @@ The persistent memory changes introduced in `go-pmem` is currently supported
 only on Linux amd64. To compile the codebase:
 ```
 $ cd src
-$ ./all.bash
+$ ./make.bash
 ```
 The compiled Go binary will be placed in the `bin/` directory. An example
 application (`example.go`) written to use persistent memory features provided by
