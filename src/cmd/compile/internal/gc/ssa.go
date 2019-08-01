@@ -786,15 +786,9 @@ func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 	s.instrument(t, src, false)
 	s.instrument(t, dst, true)
 	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		nextB := s.checkInPmem(dst, src)
+		s.checkInPmem(dst, nil)
 		dst.StoreWithinTx = false
 		s.moveOrig(t, dst, src)
-		currB := s.endBlock()
-		if currB == nil {
-			panic("[ssa.go] *state.move(): ssa.Block is nil")
-		}
-		currB.AddEdgeTo(nextB)
-		s.startBlock(nextB)
 		return
 	}
 	s.moveOrig(t, dst, src)
@@ -4468,7 +4462,6 @@ func (s *state) checkInPmem(left, right *ssa.Value) *ssa.Block {
 	pmem := r[0]
 	likely := int8(1)
 	bThen := s.f.NewBlock(ssa.BlockPlain)
-	bElse := s.f.NewBlock(ssa.BlockPlain)
 	bEnd := s.f.NewBlock(ssa.BlockPlain)
 
 	b := s.endBlock()
@@ -4476,7 +4469,13 @@ func (s *state) checkInPmem(left, right *ssa.Value) *ssa.Block {
 	b.SetControl(pmem)
 	b.Likely = ssa.BranchPrediction(likely) // set Then block as likely
 	b.AddEdgeTo(bThen)                      // yes branch
-	b.AddEdgeTo(bElse)                      // no branch
+	var bElse *ssa.Block
+	if right != nil {
+		bElse = s.f.NewBlock(ssa.BlockPlain)
+		b.AddEdgeTo(bElse) // "not in pmem" branch
+	} else {
+		b.AddEdgeTo(bEnd)
+	}
 
 	s.startBlock(bThen)
 	// code for txnLog method
@@ -4487,8 +4486,18 @@ func (s *state) checkInPmem(left, right *ssa.Value) *ssa.Block {
 	}
 	b.AddEdgeTo(bEnd)
 
-	s.startBlock(bElse)
-	// code for store/move/zero should be in the bElse block
+	// For OpMove, left & right args are both pointers to memory locations
+	// (see genericOps.go), so tx.Log() can't do the variable update. So OpMove
+	// also needs to be issued along with Log() call. For this reason,
+	// there is no bElse block for OpMove. On the other hand, tx.Log() can
+	// internally update the variable for OpStore/OpZero & so it is not issued
+	// if Log() is issued. Thus, code for OpStore/OpZero is in the bElse block,
+	// but code for OpMove is in the bEnd block. Start the appropriate block.
+	if bElse != nil {
+		s.startBlock(bElse)
+	} else {
+		s.startBlock(bEnd)
+	}
 	return bEnd
 }
 
@@ -4663,7 +4672,10 @@ func (s *state) txnReadLog(args ...*ssa.Value) *ssa.Value {
 // function where this is originally done as part of AST manipulation.
 // txnLog implementation is inspired by (*state).rtcall() method
 func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
-	numArgs := 2 // TODO: (mohitv) This is fixed to 2 & depends on API of Log() method
+	numArgs := 1
+	if right != nil {
+		numArgs = 2
+	}
 	intfPtrType := types.NewPtr(types.Types[TINTER])
 	slType := types.NewSlice(types.Types[TINTER])
 	arrType := types.NewArray(types.Types[TINTER], int64(numArgs))
@@ -4689,7 +4701,9 @@ func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
 	s.store(byteptr, p, idata0)
 
 	// 1st arg of Log() call needs to be converted to empty interface explicitly
-	s.txnCallPrepareArg(right, sl0, s.constInt64(types.Types[TINT64], 1))
+	if right != nil {
+		s.txnCallPrepareArg(right, sl0, s.constInt64(types.Types[TINT64], 1))
+	}
 
 	// Make slice of args from the storage space allocated
 	slLength := s.constInt64(types.Types[TINT64], int64(numArgs))
