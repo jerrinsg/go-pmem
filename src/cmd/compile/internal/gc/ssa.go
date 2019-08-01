@@ -4514,6 +4514,18 @@ func (s *state) txnCallPrepareArg(arg, sl, argNum *ssa.Value) {
 		runtimeTypeConvFn = sysfunc("convT2Estring")
 	case argType.IsSlice():
 		runtimeTypeConvFn = sysfunc("convT2Eslice")
+	// TODO: (mohitv) For interfaces, copy idata of arg to pmem if it 
+	// is known to be in stack
+	case argType.IsEmptyInterface():
+		i = arg // arg is empty interface type, don't do anything
+	case argType.IsInterface():
+		// For an empty interface, itab field just holds the type information,
+		// extract this from arg interface
+		argITab := s.newValue1(ssa.OpITab, byteptr, arg)
+		p := s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, argITab)
+		t := s.newValue2(ssa.OpLoad, byteptr, p, s.mem())
+		argIData := s.newValue1(ssa.OpIData, byteptr, arg)
+		i = s.newValue2(ssa.OpIMake, types.Types[TINTER], t, argIData)
 	case !types.Haspointers(argType):
 		runtimeTypeConvFn = sysfunc("convT2Enoptr")
 	case types.Haspointers(argType):
