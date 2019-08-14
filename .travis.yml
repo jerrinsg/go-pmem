@@ -1,1 +1,2 @@
-script: ./src/make.bash
+before_script: cd src
+script: ./make.bash
