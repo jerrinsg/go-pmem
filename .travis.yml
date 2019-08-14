@@ -1,2 +1,2 @@
 before_script: cd src
-script: ./make.bash
+script: ./all.bash
