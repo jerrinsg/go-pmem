@@ -1115,6 +1115,12 @@ func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
 	if txReadLogFn == nil {
 		txReadLogFn = p.getNewNodeFromString("tx.ReadLog(a)")
 	}
+	if txLockFn == nil {
+		txLockFn = p.getNewNodeFromString("tx.Lock(a)")
+	}
+	if txRLockFn == nil {
+		txRLockFn = p.getNewNodeFromString("tx.RLock(a)")
+	}
 	return nodes
 }
 
