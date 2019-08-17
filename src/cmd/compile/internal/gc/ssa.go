@@ -4491,7 +4491,7 @@ func markNodeForTxReadLog(n *Node) {
 			markNodeForTxReadLog(high)
 		}
 		if max != nil {
-			panic(fmt.Sprintf("[ssa.go] compiler error. OSLICE/OSLICEARR/OSLICESTR",
+			panic(fmt.Sprintln("[ssa.go] compiler error. OSLICE/OSLICEARR/OSLICESTR",
 				"shouldn't have 3 args within []"))
 		}
 	case OADDR:
@@ -4499,7 +4499,7 @@ func markNodeForTxReadLog(n *Node) {
 		// Not reading this from log. If a call to ReadLog() is made, it would
 		// look something like tx.ReadLog(&&p) which would be a syntax error
 	default:
-		panic(fmt.Sprintf("[ssa.go] op %v", n.Op, "not supported on rhs of assignments within txn"))
+		panic(fmt.Sprintf("[ssa.go] op %v not supported on rhs of assignments within txn", n.Op))
 	}
 }
 

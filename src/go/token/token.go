@@ -108,7 +108,6 @@ const (
 	GOTO
 	IF
 	IMPORT
-	TXN
 
 	INTERFACE
 	MAP
@@ -121,6 +120,7 @@ const (
 	SWITCH
 	TYPE
 	VAR
+	TXN
 	keyword_end
 )
 
