@@ -283,6 +283,8 @@ func Main(archInit func(*Arch)) {
 	flag.BoolVar(&Ctxt.UseBASEntries, "dwarfbasentries", Ctxt.UseBASEntries, "use base address selection entries in DWARF")
 	flag.StringVar(&jsonLogOpt, "json", "", "version,destination for JSON compiler/optimizer logging")
 
+	flag.BoolVar(&flag_txn, "txn", false, "generate transaction logging code")
+
 	objabi.Flagparse(usage)
 
 	Ctxt.Pkgpath = myimportpath

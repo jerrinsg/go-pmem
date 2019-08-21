@@ -273,6 +273,7 @@ func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 	cmd.Flag.BoolVar(&cfg.BuildRace, "race", false, "")
 	cmd.Flag.BoolVar(&cfg.BuildMSan, "msan", false, "")
 	cmd.Flag.Var((*tagsFlag)(&cfg.BuildContext.BuildTags), "tags", "")
+	cmd.Flag.BoolVar(&cfg.BuildTxn, "txn", false, "generate code for transaction")
 	cmd.Flag.Var((*base.StringsFlag)(&cfg.BuildToolexec), "toolexec", "")
 	cmd.Flag.BoolVar(&cfg.BuildTrimpath, "trimpath", false, "")
 	cmd.Flag.BoolVar(&cfg.BuildWork, "work", false, "")

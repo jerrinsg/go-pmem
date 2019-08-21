@@ -45,6 +45,7 @@ var (
 	BuildV                 bool // -v flag
 	BuildWork              bool // -work flag
 	BuildX                 bool // -x flag
+	BuildTxn               bool // -txn flag
 
 	ModCacheRW bool   // -modcacherw flag
 	ModFile    string // -modfile flag
