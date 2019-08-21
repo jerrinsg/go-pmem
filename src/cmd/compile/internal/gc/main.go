@@ -253,6 +253,7 @@ func Main(archInit func(*Arch)) {
 	flag.StringVar(&blockprofile, "blockprofile", "", "write block profile to `file`")
 	flag.StringVar(&mutexprofile, "mutexprofile", "", "write mutex profile to `file`")
 	flag.StringVar(&benchfile, "bench", "", "append benchmark times to `file`")
+	flag.BoolVar(&flag_txn, "txn", false, "generate transaction logging code")
 	objabi.Flagparse(usage)
 
 	// Record flags that affect the build result. (And don't
