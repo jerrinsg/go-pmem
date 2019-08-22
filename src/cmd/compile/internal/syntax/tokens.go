@@ -63,6 +63,7 @@ const (
 	_Select      // select
 	_Struct      // struct
 	_Switch      // switch
+	_Txn         // txn
 	_Type        // type
 	_Var         // var
 
