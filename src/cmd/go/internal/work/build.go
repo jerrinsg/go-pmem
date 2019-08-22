@@ -68,6 +68,11 @@ and test commands:
 		enable interoperation with memory sanitizer.
 		Supported only on linux/amd64, linux/arm64
 		and only with Clang/LLVM as the host C compiler.
+	-txn
+		this flag enables the use of "txn" keyword. If this flag is not specified
+		during go build, use of "txn" keyword fails during compilation.
+		enable injection of transaction logging statements for stores within txn() {}.
+		Works with import of "github.com/vmware/go-pmem-transaction/transaction.
 	-v
 		print the names of packages as they are compiled.
 	-work
