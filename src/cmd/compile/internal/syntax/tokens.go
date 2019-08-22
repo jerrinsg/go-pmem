@@ -53,6 +53,7 @@ const (
 	_Func        // func
 	_Go          // go
 	_Goto        // goto
+	_Txn         // txn
 	_If          // if
 	_Import      // import
 	_Interface   // interface
