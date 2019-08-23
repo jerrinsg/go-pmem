@@ -2018,6 +2018,48 @@ func (p *parser) commClause() *CommClause {
 	return c
 }
 
+// ParseStmtFromScratch is used to get syntax tree node for arbitrary code
+// string. Used while injecting transaction initialization statements
+func ParseStmtFromScratch(s string) Stmt {
+	var pTmp parser
+	src := "package p; func _() { " + s + "; }"
+	// The filename for the inserted statement is specified as tx.go
+	f, err := Parse(NewFileBase("tx.go"), strings.NewReader(src), nil, nil, 0)
+	if err != nil {
+		pTmp.syntaxError("parse error in injecting statement")
+	}
+	return f.DeclList[0].(*FuncDecl).Body.List[0]
+}
+
+// This function adds two statements to the application code:
+// 1. var tx transaction.NewUndoTx() <- It is made sure that tx is declared once
+// 2. tx.Begin() <- always inserted
+// Other statements to Log data, End the transaction & release the transaction
+// handle will be inserted to application code at a later compilation stage.
+// These statements are inserted by parser so that context, typesystem info for
+// transaction package will be easily populated during AST creation this way
+func (p *parser) txBlockStmt(declTx bool) *TxBlockStmt {
+	t := new(TxBlockStmt)
+	t.pos = p.pos()
+	var sList []Stmt
+	p.next()
+	p.want(_Lparen)
+	p.want(_Rparen) // Not expecting any argument in txn() use
+
+	var s string
+	if declTx {
+		s = "var tx transaction.TX"
+		sList = append(sList, ParseStmtFromScratch(s))
+	}
+	s = "tx = transaction.NewUndoTx()"
+	sList = append(sList, ParseStmtFromScratch(s))
+	s = "tx.Begin()"
+	sList = append(sList, ParseStmtFromScratch(s))
+	t.Pre = sList
+	t.B = p.blockStmt("txn block")
+	return t
+}
+
 // Statement =
 // 	Declaration | LabeledStmt | SimpleStmt |
 // 	GoStmt | ReturnStmt | BreakStmt | ContinueStmt | GotoStmt |
@@ -2102,6 +2144,9 @@ func (p *parser) stmtOrNil() Stmt {
 		s.Label = p.name()
 		return s
 
+	case _Txn:
+		panic("go-pmem syntax.(*parser).stmtOrNil() can't handle txn keyword")
+
 	case _Return:
 		s := new(ReturnStmt)
 		s.pos = p.pos()
@@ -2126,7 +2171,17 @@ func (p *parser) stmtList() (l []Stmt) {
 		defer p.trace("stmtList")()
 	}
 
+	// This flag makes sure transction variable is declared
+	// only once even for multiple usage of txn() in the same block of code
+	firstTxKey := true
 	for p.tok != _EOF && p.tok != _Rbrace && p.tok != _Case && p.tok != _Default {
+		if p.tok == _Txn {
+			l = append(l, p.txBlockStmt(firstTxKey))
+			// Next time we see txn() in the same code block (demarcated by {}),
+			// a new transaction variable will not be declared
+			firstTxKey = false
+			continue
+		}
 		s := p.stmtOrNil()
 		if s == nil {
 			break
