@@ -336,6 +336,12 @@ type (
 		stmt
 	}
 
+	TxBlockStmt struct {
+		Pre []Stmt
+		B   *BlockStmt
+		stmt
+	}
+
 	ExprStmt struct {
 		X Expr
 		simpleStmt

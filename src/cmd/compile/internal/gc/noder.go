@@ -928,6 +928,12 @@ func (p *noder) stmtFall(stmt syntax.Stmt, fallOK bool) *Node {
 			return nod(OEMPTY, nil, nil)
 		}
 		return liststmt(l)
+	case *syntax.TxBlockStmt:
+		l := p.txBlockStmt(stmt)
+		if len(l) == 0 {
+			panic("go-pmem noder.stmtFall(): txBlock can never have zero nodes")
+		}
+		return liststmt(l)
 	case *syntax.ExprStmt:
 		return p.wrapname(stmt, p.expr(stmt.X))
 	case *syntax.SendStmt:
@@ -1088,6 +1094,16 @@ func (p *noder) blockStmt(stmt *syntax.BlockStmt) []*Node {
 	p.openScope(stmt.Pos())
 	nodes := p.stmts(stmt.List)
 	p.closeScope(stmt.Rbrace)
+	return nodes
+}
+
+func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
+	var nodes []*Node
+	nodes = append(nodes, p.stmts(txB.Pre)...)
+	p.openScope(txB.B.Pos())
+	txBody := p.stmts(txB.B.List)
+	p.closeScope(txB.B.Rbrace)
+	nodes = append(nodes, txBody...)
 	return nodes
 }
 
