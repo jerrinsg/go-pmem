@@ -49,7 +49,11 @@ func parseFiles(filenames []string) uint {
 			}
 			defer f.Close()
 
-			p.file, _ = syntax.Parse(base, f, p.error, p.pragma, syntax.CheckBranches) // errors are tracked via p.error
+			parserMode := syntax.CheckBranches
+			if flag_txn {
+				parserMode = parserMode | syntax.GenTxn
+			}
+			p.file, _ = syntax.Parse(base, f, p.error, p.pragma, parserMode) // errors are tracked via p.error
 		}(filename)
 	}
 
