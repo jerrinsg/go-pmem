@@ -2176,6 +2176,9 @@ func (p *parser) stmtList() (l []Stmt) {
 	firstTxKey := true
 	for p.tok != _EOF && p.tok != _Rbrace && p.tok != _Case && p.tok != _Default {
 		if p.tok == _Txn {
+			if p.mode&GenTxn == 0 {
+				p.syntaxError("txn() use not supported. Add -txn flag while building")
+			}
 			l = append(l, p.txBlockStmt(firstTxKey))
 			// Next time we see txn() in the same code block (demarcated by {}),
 			// a new transaction variable will not be declared
