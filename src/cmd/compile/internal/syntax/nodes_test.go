@@ -153,6 +153,8 @@ var stmts = []test{
 
 	{"BlockStmt", `@{}`},
 
+	{"TxBlockStmt", `@txn(){}`},
+
 	// The position of an ExprStmt is the position of the expression.
 	{"ExprStmt", `@<-ch`},
 	{"ExprStmt", `f@()`},
@@ -292,6 +294,16 @@ func testPos(t *testing.T, list []test, prefix, suffix string, extract func(*Fil
 
 		// build syntax tree
 		file, err := Parse(nil, strings.NewReader(src), nil, nil, 0)
+
+		if test.nodetyp == "TxBlockStmt" && err == nil {
+			t.Errorf("should have parse error because txn(){} cannot be parsed without additional flag: %s: %v (%s)",
+				src, err, test.nodetyp)
+			continue
+		} else if test.nodetyp == "TxBlockStmt" && err != nil {
+			// Parse again, with the correct parse mode for TxBlockStmt
+			file, err = Parse(nil, strings.NewReader(src), nil, nil, GenTxn)
+		}
+
 		if err != nil {
 			t.Errorf("parse error: %s: %v (%s)", src, err, test.nodetyp)
 			continue
