@@ -1130,8 +1130,7 @@ func (p *noder) blockStmt(stmt *syntax.BlockStmt) []*Node {
 }
 
 func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
-	var nodes []*Node
-	nodes = append(nodes, p.stmts(txB.Pre)...)
+	nodes := p.stmts(txB.Pre)
 	p.openScope(txB.B.Pos())
 	txBody := p.stmts(txB.B.List)
 	p.closeScope(txB.B.Rbrace)

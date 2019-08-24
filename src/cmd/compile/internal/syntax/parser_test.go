@@ -347,3 +347,71 @@ func TestLineDirectives(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFileWithTxn(t *testing.T) {
+	src := "package p; func _() { txn(){} txn(){} }"
+
+	// For 1st txn(), check only 3 statements are inserted
+	wantNumStms := 3
+	f, err := Parse(NewFileBase(""), strings.NewReader(src), nil, nil, GenTxn)
+	if err != nil {
+		t.Errorf("parse error: %s: %v", src, err)
+	}
+	txB := f.DeclList[0].(*FuncDecl).Body.List[0].(*TxBlockStmt)
+	if len(txB.Pre) != wantNumStms {
+		t.Errorf("parser code injection error for txn(){}, injected %v stms instead of %v stms",
+			len(txB.Pre), wantNumStms)
+	}
+	// Code within {} should be left unmodified
+	if len(txB.B.List) != 0 {
+		t.Errorf("parser code injection error for txn(){}, injected %v stms instead of 0 stms",
+			len(txB.B.List))
+	}
+	// Check 1st statement injected is "var __tx transaction.TX"
+	s0 := txB.Pre[0]
+	decl := s0.(*DeclStmt).DeclList[0].(*VarDecl)
+	if decl.NameList[0].Value != "__tx" {
+		t.Errorf("parser code injection error for txn(){}, variable name want: __tx, got: %v",
+			decl.NameList[0].Value)
+	}
+	declType := decl.Type.(*SelectorExpr).X.(*Name).Value + "." + decl.Type.(*SelectorExpr).Sel.Value
+	if declType != "transaction.TX" {
+		t.Errorf("parser code injection error for txn(){}, variable type want: transaction.TX, got: %v",
+			declType)
+	}
+
+	checkTwoStmts := func(a, b Stmt) {
+		// check a should be "__tx = transaction.NewUndoTx"
+		aFn := a.(*AssignStmt).Rhs.(*CallExpr).Fun.(*SelectorExpr)
+		aFnName := aFn.X.(*Name).Value + "." + aFn.Sel.Value
+		if aFnName != "transaction.NewUndoTx" {
+			t.Errorf("parser code injection error for txn(){}, function name want: transaction.NewUndoTx, got: %v",
+				aFnName)
+		}
+
+		// check b should be "__tx.Begin"
+		bFn := b.(*ExprStmt).X.(*CallExpr).Fun.(*SelectorExpr)
+		bFnName := bFn.X.(*Name).Value + "." + bFn.Sel.Value
+		if bFnName != "__tx.Begin" {
+			t.Errorf("parser code injection error for txn(){}, function name want: __tx.Begin, got: %v",
+				bFnName)
+		}
+	}
+
+	// check next two statements
+	checkTwoStmts(txB.Pre[1], txB.Pre[2])
+
+	// For 2nd txn(), check only 2 statements are inserted
+	wantNumStms = 2
+	txB = f.DeclList[0].(*FuncDecl).Body.List[1].(*TxBlockStmt)
+	if len(txB.Pre) != wantNumStms {
+		t.Errorf("parser code injection error for txn(){}, injected %v stms instead of %v stms",
+			len(txB.Pre), wantNumStms)
+	}
+	// Code within {} should be left unmodified
+	if len(txB.B.List) != 0 {
+		t.Errorf("parser code injection error for txn(){}, injected %v stms instead of 0 stms",
+			len(txB.B.List))
+	}
+	checkTwoStmts(txB.Pre[0], txB.Pre[1])
+}

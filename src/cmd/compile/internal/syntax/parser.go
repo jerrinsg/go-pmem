@@ -2083,9 +2083,10 @@ func ParseStmtFromScratch(s string) Stmt {
 	return f.DeclList[0].(*FuncDecl).Body.List[0]
 }
 
-// This function adds two statements to the application code:
-// 1. var tx transaction.NewUndoTx() <- It is made sure that tx is declared once
-// 2. tx.Begin() <- always inserted
+// This function adds three statements to the application code:
+// 1. var __tx transaction.TX <- It is made sure that __tx is declared once
+// 2. __tx = transaction.NewUndoTx() <- always inserted
+// 3. __tx.Begin() <- always inserted
 // Other statements to Log data, End the transaction & release the transaction
 // handle will be inserted to application code at a later compilation stage.
 // These statements are inserted by parser so that context, typesystem info for
@@ -2100,12 +2101,12 @@ func (p *parser) txBlockStmt(declTx bool) *TxBlockStmt {
 
 	var s string
 	if declTx {
-		s = "var tx transaction.TX"
+		s = "var __tx transaction.TX"
 		sList = append(sList, ParseStmtFromScratch(s))
 	}
-	s = "tx = transaction.NewUndoTx()"
+	s = "__tx = transaction.NewUndoTx()"
 	sList = append(sList, ParseStmtFromScratch(s))
-	s = "tx.Begin()"
+	s = "__tx.Begin()"
 	sList = append(sList, ParseStmtFromScratch(s))
 	t.Pre = sList
 	t.B = p.blockStmt("txn block")
