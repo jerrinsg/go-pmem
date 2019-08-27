@@ -11,5 +11,8 @@ fi
 OLDPATH="$PATH"
 . ./make.bash "$@" --no-banner
 bash run.bash --no-rebuild
+export GO_GCFLAGS="-txn"
+echo 'Running tests again with -txn flag'
+bash run.bash --no-rebuild
 PATH="$OLDPATH"
 $GOTOOLDIR/dist banner  # print build info
