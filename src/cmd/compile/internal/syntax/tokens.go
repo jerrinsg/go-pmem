@@ -63,8 +63,8 @@ const (
 	_Select      // select
 	_Struct      // struct
 	_Switch      // switch
-	_Type        // type
 	_Txn         // txn
+	_Type        // type
 	_Var         // var
 
 	// empty line comment to exclude it from .String
