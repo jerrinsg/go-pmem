@@ -228,6 +228,16 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 
 	s.insertPhis()
 
+	if s.hasTxn {
+		s.f.HasTxn = true
+
+		// Below needs to be done just once per compilation, as they cannot change
+		// from function to function. TODO: (mohitv) Better way?
+		txLog := typecheck(txLogFn.Left, Ecall) // txLog = txn.Log, not the function call
+		dowidth(txLog.Type)
+		ssa.TxLogFnOffset = txLog.Xoffset
+		ssa.TxLogFnStkSize = txLog.Type.ArgWidth()
+	}
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
 	return s.f
@@ -379,7 +389,9 @@ type state struct {
 	// store transaction interface's ssa.Value to be used for injecting Log()
 	// & ReadLog() calls during buildssa
 	txIntf    *ssa.Value
+	txIntfUnsafePtr *ssa.Value
 	inTxBlock bool
+	hasTxn    bool
 }
 
 type funcLine struct {
@@ -740,19 +752,12 @@ func (s *state) rawLoad(t *types.Type, src *ssa.Value) *ssa.Value {
 }
 
 func (s *state) store(t *types.Type, dst, val *ssa.Value) {
-	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		nextB := s.checkInPmem(dst, val)
-		dst.StoreWithinTx = false
-		s.storeOrig(t, dst, val)
-		currB := s.endBlock()
-		if currB == nil {
-			panic("[ssa.go] *state.store(): ssa.Block is nil")
-		}
-		currB.AddEdgeTo(nextB)
-		s.startBlock(nextB)
-		return
-	}
 	s.storeOrig(t, dst, val)
+	if flag_txn && dst.StoreWithinTx {
+		dst.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
 }
 
 func (s *state) storeOrig(t *types.Type, dst, val *ssa.Value) {
@@ -761,19 +766,12 @@ func (s *state) storeOrig(t *types.Type, dst, val *ssa.Value) {
 
 func (s *state) zero(t *types.Type, dst *ssa.Value) {
 	s.instrument(t, dst, true)
-	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		nextB := s.checkInPmem(dst, s.constInt(types.Types[TINT], 0))
-		dst.StoreWithinTx = false
-		s.zeroOrig(t, dst)
-		currB := s.endBlock()
-		if currB == nil {
-			panic("[ssa.go] *state.zero(): ssa.Block is nil")
-		}
-		currB.AddEdgeTo(nextB)
-		s.startBlock(nextB)
-		return
-	}
 	s.zeroOrig(t, dst)
+	if flag_txn && dst.StoreWithinTx {
+		dst.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
 }
 
 func (s *state) zeroOrig(t *types.Type, dst *ssa.Value) {
@@ -785,13 +783,13 @@ func (s *state) zeroOrig(t *types.Type, dst *ssa.Value) {
 func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 	s.instrument(t, src, false)
 	s.instrument(t, dst, true)
-	if flag_txn && dst.StoreWithinTx && !s.isAllocatedOnStack(dst) {
-		s.checkInPmem(dst, nil)
-		dst.StoreWithinTx = false
-		s.moveOrig(t, dst, src)
-		return
-	}
+
 	s.moveOrig(t, dst, src)
+	if flag_txn && dst.StoreWithinTx {
+		dst.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
 }
 
 func (s *state) moveOrig(t *types.Type, dst, src *ssa.Value) {
@@ -836,6 +834,7 @@ func (s *state) stmt(n *Node) {
 		// fill tx handle in g
 		s.initTxHandleInG(n.aux)
 		s.inTxBlock = true
+		s.hasTxn = true
 		s.stmtList(n.List)
 		s.inTxBlock = false
 		s.resetTxHandleInG()
@@ -4342,6 +4341,7 @@ func (s *state) initTxHandleInG(isRedoTx uint8) {
 	txHandle = s.newValue1(ssa.OpCopy, types.NewPtr(txType), txIntfUnsafePtr)
 	// s.TxIntf = *txHandle
 	s.txIntf = s.load(txType, txHandle)
+	s.txIntfUnsafePtr = txIntfUnsafePtr
 
 	// code for tx.Begin() goes here
 	txBegin := typecheck(txBeginFn.Left, Ecall)
@@ -4772,25 +4772,31 @@ func (s *state) txnLog(left, right *ssa.Value) []*ssa.Value {
 // do *left = right for type t.
 func (s *state) storeType(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	s.instrument(t, left, true)
-	if flag_txn && left.StoreWithinTx && !s.isAllocatedOnStack(left) {
-		nextB := s.checkInPmem(left, right)
-		left.StoreWithinTx = false
-		s.storeTypeOrig(t, left, right, skip, leftIsStmt)
-		currB := s.endBlock()
-		if currB == nil {
-			panic("[ssa.go] *state.storeType(): ssa.Block is nil")
-		}
-		currB.AddEdgeTo(nextB)
-		s.startBlock(nextB)
-		return
-	}
 	s.storeTypeOrig(t, left, right, skip, leftIsStmt)
+	if flag_txn && left.StoreWithinTx {
+		left.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
 }
 
 func (s *state) storeTypeOrig(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	if skip == 0 && (!types.Haspointers(t) || ssa.IsStackAddr(left)) {
 		// Known to not have write barrier. Store the whole type.
 		s.vars[&memVar] = s.newValue3Apos(ssa.OpStore, types.TypeMem, t, left, right, s.mem(), leftIsStmt)
+		return
+	}
+
+	// This special case ensures that for slices, slice pointer is written first,
+	// and then slice len, cap. This is because a slice write is broken into 3 writes
+	// i) update len, ii) update cap & iii) update data, in this order.
+	// But we only track data write and other 2 writes must come after this to ensure
+	// crash consistency
+	if flag_txn && left.StoreWithinTx && t.IsSlice() {
+		if skip&skipPtr == 0 && types.Haspointers(t) {
+			s.storeTypePtrs(t, left, right)
+		}
+		s.storeTypeScalars(t, left, right, skip)
 		return
 	}
 
@@ -6491,6 +6497,10 @@ func (e *ssafn) Syslook(name string) *obj.LSym {
 		return typedmemmove
 	case "typedmemclr":
 		return typedmemclr
+	case "inpmem":
+		return sysfunc("inpmem")
+	case "newobject":
+		return sysfunc("newobject")
 	}
 	Fatalf("unknown Syslook func %v", name)
 	return nil

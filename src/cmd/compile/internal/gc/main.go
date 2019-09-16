@@ -631,7 +631,9 @@ func Main(archInit func(*Arch)) {
 			transformclosure(n)
 		}
 	}
-
+	if flag_txn {
+		ssa.Flag_txn = true
+	}
 	// Prepare for SSA compilation.
 	// This must be before peekitabs, because peekitabs
 	// can trigger function compilation.

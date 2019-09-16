@@ -57,6 +57,8 @@ type Value struct {
 	StoreWithinTx bool
 	LoadWithinTx  bool
 
+	LogThisStore bool
+	TxHandle *Value
 	// Storage for the first three args
 	argstorage [3]*Value
 }
