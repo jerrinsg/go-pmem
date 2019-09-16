@@ -1083,7 +1083,7 @@ func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
 	// by parser to avoid unused import error and fill the Context, typesystem
 	// info during compilation
 	for i := range nodes {
-		nodes[i].SetInjectedTxStmt(true)
+		nodes[i].SetTxClass(1)
 	}
 	if txB.Logger == syntax.NullLog {
 		nodes = append(nodes, p.blockStmt(txB.B)...)

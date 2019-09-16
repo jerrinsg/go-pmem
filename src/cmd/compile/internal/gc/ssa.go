@@ -801,7 +801,7 @@ func (s *state) moveOrig(t *types.Type, dst, src *ssa.Value) {
 // stmtList converts the statement list n to SSA and adds it to s.
 func (s *state) stmtList(l Nodes) {
 	for _, n := range l.Slice() {
-		if flag_txn && n.IsInjectedTxStmt() {
+		if flag_txn && (n.TxClass() == 1) {
 			// These nodes were inserted by syntax/parser.go & marked by
 			// gc/noder.go to fill Context, typesystem info. Don't generate SSA
 			// for these nodes
@@ -1743,7 +1743,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 			sym := funcsym(n.Sym).Linksym()
 			return s.entryNewValue1A(ssa.OpAddr, types.NewPtr(n.Type), sym, s.sb)
 		}
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			addr := s.addr(n, false)
 			addr.LoadWithinTx = true
 			return s.load(n.Type, addr)
@@ -2276,7 +2276,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 
 	case OIND:
 		p := s.exprPtr(n.Left, false, n.Pos)
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			p.LoadWithinTx = true
 		}
 		return s.load(n.Type, p)
@@ -2291,7 +2291,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 			}
 			return s.zeroVal(n.Type)
 		}
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			p := s.addr(n, false)
 			p.LoadWithinTx = true
 			return s.load(n.Type, p)
@@ -2311,13 +2311,13 @@ func (s *state) expr(n *Node) *ssa.Value {
 	case ODOTPTR:
 		p := s.exprPtr(n.Left, false, n.Pos)
 		p = s.newValue1I(ssa.OpOffPtr, types.NewPtr(n.Type), n.Xoffset, p)
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			p.LoadWithinTx = true
 		}
 		return s.load(n.Type, p)
 
 	case OINDEX:
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			p := s.addr(n.Left, false)
 			q := s.expr(n.Right)
 			return s.txnReadLog(p, q)
@@ -2430,7 +2430,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 		if max != nil {
 			k = s.extendIndex(s.expr(max), panicslice)
 		}
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			if max != nil {
 				s.Fatalf("[ssa.go] txn block can't understand expr %v\n", n)
 			}
@@ -2450,7 +2450,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 		if high != nil {
 			j = s.extendIndex(s.expr(high), panicslice)
 		}
-		if flag_txn && n.IsInjectedTxReadLog() {
+		if flag_txn && (n.TxClass() == 2) {
 			v := s.addr(n.Left, false)
 			return s.txnReadLog(v, i, j)
 		}
@@ -2787,7 +2787,7 @@ func (s *state) assign(left *Node, right *ssa.Value, deref bool, skip skipMask) 
 		s.vars[&memVar] = s.newValue1Apos(ssa.OpVarDef, types.TypeMem, left, s.mem(), !left.IsAutoTmp())
 	}
 	addr := s.addr(left, false)
-	if flag_txn && left.IsInjectedTxStmt() {
+	if flag_txn && (left.TxClass() == 1) {
 		addr.StoreWithinTx = true
 	}
 	if isReflectHeaderDataField(left) {
@@ -4449,15 +4449,15 @@ func markNodeForTxLog(n *Node) {
 	if n == nil || n.IsAutoTmp() {
 		return
 	}
-	n.SetInjectedTxStmt(true)
+	n.SetTxClass(1)
 	if n.Op == OINDEX {
 		markNodeForTxReadLog(n.Left)
 		markNodeForTxReadLog(n.Right)
 	}
 }
 
-// Cases which set the InjectedTxReadLog flag of Node, need to be handled
-// explicitly in *state.expr method
+// Cases which set the TxClass of Node to 2 (reads within txn block), need to be
+// handled explicitly in *state.expr method
 func markNodeForTxReadLog(n *Node) {
 	// TODO: (mohitv) Disable marking nodes for ReadLog instrumentation
 	// This would result in redo logging not working correctly
@@ -4469,7 +4469,7 @@ func markNodeForTxReadLog(n *Node) {
 	case OLITERAL, OSTRUCTLIT, OARRAYLIT, OSLICELIT:
 		// do nothing
 	case ONAME, OIND, ODOTPTR, ODOT:
-		n.SetInjectedTxReadLog(true)
+		n.SetTxClass(2)
 	// binary ops
 	case OLT, OEQ, ONE, OLE, OGE, OGT, OADD, OSUB, OMUL, ODIV, OMOD, OAND,
 		OOR, OXOR, OLSH, ORSH, OANDAND, OOROR, OCOMPLEX:
@@ -4479,10 +4479,10 @@ func markNodeForTxReadLog(n *Node) {
 	case OMINUS, ONOT, OCOM, OIMAG, OREAL, OPLUS:
 		markNodeForTxReadLog(n.Left)
 	case OINDEX:
-		n.SetInjectedTxReadLog(true)
+		n.SetTxClass(2)
 		markNodeForTxReadLog(n.Right)
 	case OSLICE, OSLICEARR, OSLICESTR:
-		n.SetInjectedTxReadLog(true)
+		n.SetTxClass(2)
 		low, high, max := n.SliceBounds()
 		if low != nil {
 			markNodeForTxReadLog(low)
