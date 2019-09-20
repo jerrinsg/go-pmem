@@ -78,10 +78,10 @@ func verifyMetadata() error {
 	mappedSize := pmemHeader.mappedSize
 	fsize := getFileSize(pmemInfo.fname)
 	if fsize < 0 {
-		return error(errorString("Get file size failed"))
+		return errorString("Get file size failed")
 	}
 	if fsize < int(mappedSize) {
-		return error(errorString("File was externally truncated"))
+		return errorString("File was externally truncated")
 	}
 
 	if mappedSize == pmemHeaderSize {
@@ -99,7 +99,7 @@ func verifyMetadata() error {
 		mapAddr, isPmem, err := mapFile(pmemInfo.fname, pageSize, fileCreate,
 			_DEFAULT_FMODE, totalArenaSize, nil)
 		if err != 0 {
-			return error(errorString("Arena map failed"))
+			return errorString("Arena map failed")
 		}
 		if totalArenaSize == 0 {
 			// Add the global header size to get to the first arena's metadata
@@ -109,14 +109,14 @@ func verifyMetadata() error {
 		parena := (*pArena)(unsafe.Pointer(uintptr(mapAddr) + arenaOff))
 		if parena.magic != hdrMagic || isPmem != pmemInfo.isPmem {
 			munmap(mapAddr, pageSize)
-			return error(errorString("Arena metadata mismatch"))
+			return errorString("Arena metadata mismatch")
 		}
 		totalArenaSize += parena.size
 		munmap(mapAddr, pageSize)
 	}
 
 	if totalArenaSize != mappedSize {
-		return error(errorString("Arena size mismatch"))
+		return errorString("Arena size mismatch")
 	}
 
 	return nil
