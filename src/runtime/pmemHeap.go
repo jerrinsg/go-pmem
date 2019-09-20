@@ -149,13 +149,13 @@ var pmemInfo struct {
 // medium.
 func PmemInit(fname string) (unsafe.Pointer, error) {
 	if GOOS != "linux" || GOARCH != "amd64" {
-		return nil, error(errorString("Unsupported architecture"))
+		return nil, errorString("Unsupported architecture")
 	}
 
 	// Change persistent memory initialization state from not-done to ongoing
 	if !atomic.Cas(&pmemInfo.initState, initNotDone, initOngoing) {
-		return nil, error(errorString(`Persistent memory is already initialized
-				or initialization is ongoing`))
+		return nil, errorString(`Persistent memory is already initialized
+				or initialization is ongoing`)
 	}
 
 	// Set the persistent memory file name. This will be used to map the file
@@ -167,7 +167,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	mapAddr, isPmem, err := mapFile(fname, int(pmemHeaderSize), fileCreate,
 		_DEFAULT_FMODE, 0, nil)
 	if err != 0 {
-		return nil, error(errorString("Mapping persistent memory file failed"))
+		return nil, errorString("Mapping persistent memory file failed")
 	}
 	pmemHeader = (*pHeader)(mapAddr)
 	pmemInfo.isPmem = isPmem
@@ -251,7 +251,7 @@ func mapArenas() error {
 			fileCreate, _DEFAULT_FMODE, mapped, nil)
 		if err != 0 {
 			unmapArenas(arenas)
-			return error(errorString("Arena mapping failed"))
+			return errorString("Arena mapping failed")
 		}
 
 		// Point at the arena header
@@ -270,7 +270,7 @@ func mapArenas() error {
 				_DEFAULT_FMODE, mapped, nil)
 			if err != 0 {
 				unmapArenas(arenas)
-				return error(errorString("Arena mapping failed"))
+				return errorString("Arena mapping failed")
 			}
 		}
 
@@ -566,7 +566,7 @@ func GetRoot() unsafe.Pointer {
 func SetRoot(addr unsafe.Pointer) (err error) {
 	s := spanOfHeap(uintptr(addr))
 	if s == nil || s.memtype != isPersistent {
-		return error(errorString("Invalid address passed to SetRoot"))
+		return errorString("Invalid address passed to SetRoot")
 	}
 
 	ai := arenaIndex(uintptr(addr))
