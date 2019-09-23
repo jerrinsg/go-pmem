@@ -11,7 +11,7 @@ programming language. Key contributions of this work are:
 We have added two new APIs to Go to support persistent memory allocations:
 1. ```func pmake(t Type, size ...IntType) Type```
 The `pmake` API is used to create a slice in pmem. The semantics of `pmake` is
-exactly the same as the `make` API in Go. Creating maps and slices in persistent
+exactly the same as the `make` API in Go. Creating maps in persistent
 memory is not yet supported.
 2. ```func pnew(Type) *Type```
 Just like `new`, `pnew` creates a zero-value object of the Type argument in
