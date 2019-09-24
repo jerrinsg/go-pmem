@@ -57,6 +57,7 @@ type Node struct {
 
 	Op  Op
 	aux uint8
+	hasTxn bool
 }
 
 func (n *Node) ResetAux() {

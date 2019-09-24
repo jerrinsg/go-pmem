@@ -148,6 +148,7 @@ type noder struct {
 	scopeVars []int
 
 	lastCloseScopePos syntax.Pos
+	foundTxn bool
 }
 
 func (p *noder) funcBody(fn *Node, block *syntax.BlockStmt) {
@@ -156,12 +157,16 @@ func (p *noder) funcBody(fn *Node, block *syntax.BlockStmt) {
 	funchdr(fn)
 
 	if block != nil {
+		p.foundTxn = false
 		body := p.stmts(block.List)
 		if body == nil {
 			body = []*Node{nod(OEMPTY, nil, nil)}
 		}
 		fn.Nbody.Set(body)
-
+		if p.foundTxn {
+			fn.hasTxn = true
+		}
+		p.foundTxn = false
 		lineno = p.makeXPos(block.Rbrace)
 		fn.Func.Endlineno = lineno
 	}
@@ -1089,6 +1094,7 @@ func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
 		nodes = append(nodes, p.blockStmt(txB.B)...)
 		return nodes
 	}
+	p.foundTxn = true
 	p.openScope(txB.B.Pos())
 	txBody := p.stmts(txB.B.List)
 	p.closeScope(txB.B.Rbrace)
