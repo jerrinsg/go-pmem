@@ -58,6 +58,7 @@ type Value struct {
 	LoadWithinTx  bool
 
 	LogThisStore bool
+	InPmem bool
 	TxHandle *Value
 	// Storage for the first three args
 	argstorage [3]*Value
