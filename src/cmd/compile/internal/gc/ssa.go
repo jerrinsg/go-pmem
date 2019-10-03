@@ -4385,39 +4385,36 @@ func (s *state) initTxHandleInG(isRedoTx uint8) {
 
 // Reset tx handle of the current goroutine to nil if needed, using
 // runtime.setTxHandle(). Else do nothing.
-// If tx.End() returns nil error value, tx handle is set to nil &
-// transaction.Release(tx) is called. If the error returned is non-nil, don't do
-// anything.
+// If tx.End() returns true, tx handle is set to nil & transaction.Release(tx) 
+// is called. If tx.End() returns false, don't do anything.
 func (s *state) resetTxHandleInG() {
-	// err = tx.End()
+	// b = tx.End()
 	txEnd := typecheck(txEndFn.Left, Ecall)
 	fnOffset := txEnd.Xoffset
 	call, off := s.txnIntfCall(fnOffset, nil)
 
-	// collect the result which is of type error (interface)
-	intfType := types.Types[TINTER]
-	off = Rnd(off, intfType.Alignment())
-	ptr := s.constOffPtrSP(types.NewPtr(intfType), off)
-	result := s.load(intfType, ptr)
-	off += intfType.Size()
+	// collect the result which is of type bool
+	boolType := types.Types[TBOOL]
+	off = Rnd(off, boolType.Alignment())
+	ptr := s.constOffPtrSP(types.NewPtr(boolType), off)
+	result := s.load(boolType, ptr)
+	off += boolType.Size()
 	off = Rnd(off, int64(Widthptr))
 	call.AuxInt = off
-	nilValue := s.constInterface(types.Types[TINTER])
-	// if err == nil
-	isErrorNil := s.newValue2(ssa.OpEqInter, types.Types[TBOOL], result, nilValue)
+	// if t.End() {}
 	likely := int8(1)
 	bThen := s.f.NewBlock(ssa.BlockPlain)
 	bEnd := s.f.NewBlock(ssa.BlockPlain)
 
 	b := s.endBlock()
 	b.Kind = ssa.BlockIf
-	b.SetControl(isErrorNil)
+	b.SetControl(result)
 	b.Likely = ssa.BranchPrediction(likely)
 	b.AddEdgeTo(bThen)
 	b.AddEdgeTo(bEnd)
 
 	s.startBlock(bThen)
-	// error returned is nil, so we are in the "then" block
+	// End() returned true, so we are in the "then" block
 	// call transaction.Release(tx)
 	off = Ctxt.FixedFrameSize()
 	off = Rnd(off, txType.Alignment())
@@ -4432,7 +4429,7 @@ func (s *state) resetTxHandleInG() {
 
 	// reset tx handle in "g"
 	// runtime.setTxHandle(nil)
-	nilValue = s.constNil(types.Types[TUNSAFEPTR])
+	nilValue := s.constNil(types.Types[TUNSAFEPTR])
 	fn = sysfunc("setTxHandle")
 	s.rtcall(fn, true, []*types.Type{}, nilValue)
 	b = s.endBlock()
