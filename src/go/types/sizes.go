@@ -103,7 +103,7 @@ func (s *StdSizes) Offsetsof(fields []*Var) []int64 {
 
 var basicSizes = [...]byte{
 	Bool:       1,
-	Int8:       1,
+	Int8:       2,
 	Int16:      2,
 	Int32:      4,
 	Int64:      8,

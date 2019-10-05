@@ -159,7 +159,7 @@ func check() {
 	var x1 x1t
 	var y1 y1t
 
-	if unsafe.Sizeof(a) != 1 {
+	if unsafe.Sizeof(a) != 2 {
 		throw("bad a")
 	}
 	if unsafe.Sizeof(b) != 1 {

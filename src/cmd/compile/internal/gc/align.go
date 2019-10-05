@@ -228,8 +228,14 @@ func dowidth(t *types.Type) {
 		Fatalf("dowidth: unknown type: %v", t)
 
 	// compiler-specific stuff
-	case TINT8, TUINT8, TBOOL:
+	case TINT8:
 		// bool is int8
+		w = 2
+
+	case TUINT8:
+		w = 1
+
+	case TBOOL:
 		w = 1
 
 	case TINT16, TUINT16:

@@ -7,7 +7,7 @@ package runtime
 const (
 	// vdsoArrayMax is the byte-size of a maximally sized array on this architecture.
 	// See cmd/compile/internal/amd64/galign.go arch.MAXWIDTH initialization.
-	vdsoArrayMax = 1<<50 - 1
+	vdsoArrayMax = 1<<49 - 1
 )
 
 var vdsoLinuxVersion = vdsoVersionKey{"LINUX_2.6", 0x3ae75f6}

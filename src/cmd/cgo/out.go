@@ -1344,7 +1344,7 @@ var goTypes = map[string]*Type{
 	"int":        {Size: 0, Align: 0, C: c("GoInt")},
 	"uint":       {Size: 0, Align: 0, C: c("GoUint")},
 	"rune":       {Size: 4, Align: 4, C: c("GoInt32")},
-	"int8":       {Size: 1, Align: 1, C: c("GoInt8")},
+	"int8":       {Size: 2, Align: 2, C: c("GoInt8")},
 	"uint8":      {Size: 1, Align: 1, C: c("GoUint8")},
 	"int16":      {Size: 2, Align: 2, C: c("GoInt16")},
 	"uint16":     {Size: 2, Align: 2, C: c("GoUint16")},
