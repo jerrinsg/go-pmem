@@ -833,6 +833,9 @@ func (s *state) stmt(n *Node) {
 	case OBLOCK:
 		s.stmtList(n.List)
 	case OTXBLOCK:
+		if s.inTxBlock {
+			s.Fatalf("We don't support nested txn() usage currently")
+		}
 		// fill tx handle in g
 		s.initTxHandleInG(n.aux)
 		s.inTxBlock = true
@@ -1285,6 +1288,9 @@ func (s *state) exit() *ssa.Block {
 		s.rtcall(Deferreturn, true, nil)
 	}
 
+	if s.inTxBlock {
+		s.resetTxHandleInG()
+	}
 	// Run exit code. Typically, this code copies heap-allocated PPARAMOUT
 	// variables back to the stack.
 	s.stmtList(s.curfn.Func.Exit)
@@ -2467,7 +2473,7 @@ func (s *state) expr(n *Node) *ssa.Value {
 
 	case OCALLINTER, OCALLMETH:
 		a := s.call(n, callNormal)
-		v :=  s.load(n.Type, a)
+		v := s.load(n.Type, a)
 		if flag_txn && s.hasTxn && s.isPmemAddr(n, v) {
 			v.InPmem = true
 		}
@@ -4383,11 +4389,17 @@ func (s *state) initTxHandleInG(isRedoTx uint8) {
 	call.AuxInt = txBegin.Type.ArgWidth()
 }
 
+// This function injects code to successfully end a transaction. This can happen
+// when txn() code block ends syntactically and/or if there is a return in
+// between.
 // Reset tx handle of the current goroutine to nil if needed, using
 // runtime.setTxHandle(). Else do nothing.
-// If tx.End() returns true, tx handle is set to nil & transaction.Release(tx) 
+// If tx.End() returns true, tx handle is set to nil & transaction.Release(tx)
 // is called. If tx.End() returns false, don't do anything.
 func (s *state) resetTxHandleInG() {
+	if s.curBlock == nil {
+		return
+	}
 	// b = tx.End()
 	txEnd := typecheck(txEndFn.Left, Ecall)
 	fnOffset := txEnd.Xoffset
@@ -4601,7 +4613,7 @@ func (s *state) txnCallPrepareArg(arg, sl, argNum *ssa.Value) {
 		runtimeTypeConvFn = sysfunc("convT2Estring")
 	case argType.IsSlice():
 		runtimeTypeConvFn = sysfunc("convT2Eslice")
-	// TODO: (mohitv) For interfaces, copy idata of arg to pmem if it 
+	// TODO: (mohitv) For interfaces, copy idata of arg to pmem if it
 	// is known to be in stack
 	case argType.IsEmptyInterface():
 		i = arg // arg is empty interface type, don't do anything
