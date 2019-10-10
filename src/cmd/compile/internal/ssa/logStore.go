@@ -33,7 +33,7 @@ func willAccessPmem(v *Value) bool {
 	}
 	if v.InPmem {
 		return true
-   }
+	}
    return false
 }
 
@@ -72,7 +72,7 @@ func logStore(f *Func) {
 		defer f.retSparseSet(sset)
 
 		for _, b := range f.Blocks {
-			if _, ok := blockDone[b.ID]; ok {
+			if _, ok := blockDone[b.ID]; ok && blockDone[b.ID] {
 				continue
 			}
 			blockDone[b.ID] = true
