@@ -1,8 +1,8 @@
 package ssa
 
 import (
-	"cmd/internal/obj"
 	"cmd/compile/internal/types"
+	"cmd/internal/obj"
 	"cmd/internal/src"
 )
 
@@ -10,7 +10,7 @@ import (
 // txn() block, and add a Log() call before this store to ensure crash consistency
 
 var (
-	TxLogFnOffset int64
+	TxLogFnOffset  int64
 	TxLogFnStkSize int64
 )
 
@@ -34,7 +34,7 @@ func willAccessPmem(v *Value) bool {
 	if v.InPmem {
 		return true
 	}
-   return false
+	return false
 }
 
 // implementation inspired from ssa.writebarrier method
@@ -64,91 +64,91 @@ func logStore(f *Func) {
 
 	blockDone := make(map[ID]bool)
 
-	loop:
-		// allocate auxiliary date structures for computing store order
-		// This needs to be re-done when f.NumValues() changes because we
-		// inject new ssa nodes in the loop below when needLog(v) is true.
-		sset := f.newSparseSet(f.NumValues())
-		defer f.retSparseSet(sset)
+loop:
+	// allocate auxiliary date structures for computing store order
+	// This needs to be re-done when f.NumValues() changes because we
+	// inject new ssa nodes in the loop below when needLog(v) is true.
+	sset := f.newSparseSet(f.NumValues())
+	defer f.retSparseSet(sset)
 
-		for _, b := range f.Blocks {
-			if _, ok := blockDone[b.ID]; ok && blockDone[b.ID] {
-				continue
-			}
-			blockDone[b.ID] = true
-			storeNumber := make([]int32, f.NumValues())
-			// First, order values in the current block w.r.t. stores.
-			b.Values = storeOrder(b.Values, sset, storeNumber)
-			for i, v := range b.Values {
-				switch v.Op {
-				case OpStore, OpZero, OpMove:
-					if needLog(v) {
-						txHandle := v.TxHandle
-						v.TxHandle = nil // reset to nil as other ssa passes don't know about this
-						after = append(after[:0], b.Values[i:]...)
-						b.Values = b.Values[:i]
-						ptr := v.Args[0] // memory location this Op changes
+	for _, b := range f.Blocks {
+		if _, ok := blockDone[b.ID]; ok && blockDone[b.ID] {
+			continue
+		}
+		blockDone[b.ID] = true
+		storeNumber := make([]int32, f.NumValues())
+		// First, order values in the current block w.r.t. stores.
+		b.Values = storeOrder(b.Values, sset, storeNumber)
+		for i, v := range b.Values {
+			switch v.Op {
+			case OpStore, OpZero, OpMove:
+				if needLog(v) {
+					txHandle := v.TxHandle
+					v.TxHandle = nil // reset to nil as other ssa passes don't know about this
+					after = append(after[:0], b.Values[i:]...)
+					b.Values = b.Values[:i]
+					ptr := v.Args[0] // memory location this Op changes
 
-						// The memory before the store
-						mem := v.MemoryArg()
-						pos := v.Pos
-						if willAccessPmem(ptr) {
-							// no need to call runtime.inPmem() & create new ssa blocks. Only emit
-							// tx.Log() call here
-							mem = txLogCall(pos, b, mem, sb, sp, ptr, txHandle)
-							v.RemoveArg(2)
-							v.AddArg(mem)
-							b.Values = append(b.Values, after...)
-							blockDone[b.ID] = false // Process this block again, there may be more stores
-						} else {
-							bThen := f.NewBlock(BlockPlain)
-							bEnd := f.NewBlock(b.Kind)
-							bThen.Pos = pos // TODO: (mohitv) verify pos settings
-							bEnd.Pos = b.Pos
-							b.Pos = pos
+					// The memory before the store
+					mem := v.MemoryArg()
+					pos := v.Pos
+					if willAccessPmem(ptr) {
+						// no need to call runtime.inPmem() & create new ssa blocks. Only emit
+						// tx.Log() call here
+						mem = txLogCall(pos, b, mem, sb, sp, ptr, txHandle)
+						v.RemoveArg(2)
+						v.AddArg(mem)
+						b.Values = append(b.Values, after...)
+						blockDone[b.ID] = false // Process this block again, there may be more stores
+					} else {
+						bThen := f.NewBlock(BlockPlain)
+						bEnd := f.NewBlock(b.Kind)
+						bThen.Pos = pos // TODO: (mohitv) verify pos settings
+						bEnd.Pos = b.Pos
+						b.Pos = pos
 
-							// set up control flow for end block
-							bEnd.SetControl(b.Control)
-							bEnd.Likely = b.Likely
-							for _, e := range b.Succs {
-								bEnd.Succs = append(bEnd.Succs, e)
-								e.b.Preds[e.i].b = bEnd
-							}
-
-							// set up control flow for inpmem test
-							fn := f.fe.Syslook("inpmem")
-							memIf, flag := rtcall(pos, fn, b, mem, sp, ptr, f.Config.Types.Bool) // inpmem call modifies memory
-							b.Kind = BlockIf
-							b.SetControl(flag)
-							b.Likely = BranchUnlikely
-							b.Succs = b.Succs[:0]
-							b.AddEdgeTo(bThen)
-							b.AddEdgeTo(bEnd)
-							bThen.AddEdgeTo(bEnd)
-
-							// prepare the then block.
-							// emit tx.Log() call here
-							memThen := txLogCall(pos, bThen, memIf, sb, sp, ptr, txHandle)
-
-							// NO ELSE block
-
-							// create a new phi node to merge memory
-							m := bEnd.NewValue0(pos, OpPhi, types.TypeMem) // TODO: (mohitv) Not sure about pos
-							m.Block = bEnd
-							m.AddArg(memIf)
-							m.AddArg(memThen)
-							v.RemoveArg(2) // TODO: (mohitv) 2 is because OpStore has 3 args(0/1/2) , 2nd arg is memory arg
-							v.AddArg(m)
-							bEnd.Values = append(bEnd.Values, after...)
-							for _, w := range after {
-								w.Block = bEnd
-							}
+						// set up control flow for end block
+						bEnd.SetControl(b.Control)
+						bEnd.Likely = b.Likely
+						for _, e := range b.Succs {
+							bEnd.Succs = append(bEnd.Succs, e)
+							e.b.Preds[e.i].b = bEnd
 						}
-						goto loop
+
+						// set up control flow for inpmem test
+						fn := f.fe.Syslook("inpmem")
+						memIf, flag := rtcall(pos, fn, b, mem, sp, ptr, f.Config.Types.Bool) // inpmem call modifies memory
+						b.Kind = BlockIf
+						b.SetControl(flag)
+						b.Likely = BranchUnlikely
+						b.Succs = b.Succs[:0]
+						b.AddEdgeTo(bThen)
+						b.AddEdgeTo(bEnd)
+						bThen.AddEdgeTo(bEnd)
+
+						// prepare the then block.
+						// emit tx.Log() call here
+						memThen := txLogCall(pos, bThen, memIf, sb, sp, ptr, txHandle)
+
+						// NO ELSE block
+
+						// create a new phi node to merge memory
+						m := bEnd.NewValue0(pos, OpPhi, types.TypeMem) // TODO: (mohitv) Not sure about pos
+						m.Block = bEnd
+						m.AddArg(memIf)
+						m.AddArg(memThen)
+						v.RemoveArg(2) // TODO: (mohitv) 2 is because OpStore has 3 args(0/1/2) , 2nd arg is memory arg
+						v.AddArg(m)
+						bEnd.Values = append(bEnd.Values, after...)
+						for _, w := range after {
+							w.Block = bEnd
+						}
 					}
+					goto loop
 				}
 			}
 		}
+	}
 }
 
 func txLogCall(pos src.XPos, b *Block, mem, sb, sp, ptr, txHandle *Value) *Value {
