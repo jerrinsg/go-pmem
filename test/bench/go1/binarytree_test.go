@@ -7,7 +7,10 @@
 
 package go1
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 type binaryNode struct {
 	item        int
@@ -16,9 +19,18 @@ type binaryNode struct {
 
 func bottomUpTree(item, depth int) *binaryNode {
 	if depth <= 0 {
-		return &binaryNode{item: item}
+		node := pnew(binaryNode)
+		node.item = item
+		return node
+		//return &binaryNode{item: item}
 	}
-	return &binaryNode{item, bottomUpTree(2*item-1, depth-1), bottomUpTree(2*item, depth-1)}
+
+	node := pnew(binaryNode)
+	node.item = item
+	node.left = bottomUpTree(2*item-1, depth-1)
+	node.right = bottomUpTree(2*item, depth-1)
+	return node
+	//return &binaryNode{item, bottomUpTree(2*item-1, depth-1), bottomUpTree(2*item, depth-1)}
 }
 
 func (n *binaryNode) itemCheck() int {
@@ -54,6 +66,10 @@ func binarytree(n int) {
 	}
 	longLivedTree.itemCheck()
 	//fmt.Printf("long lived tree of depth %d\t check: %d\n", maxDepth, longLivedTree.itemCheck())
+}
+
+func init() {
+	runtime.PmemInit("/mnt/ext4-pmem0/dataFile")
 }
 
 func BenchmarkBinaryTree17(b *testing.B) {
