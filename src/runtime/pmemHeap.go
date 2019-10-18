@@ -38,6 +38,8 @@ const (
 	// and volatile memory.
 	maxMemTypes = 2
 
+	maxTypes = 8
+
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
 
@@ -453,7 +455,8 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 		// In-use and empty (no free objects) small spans are stored in the empty
 		// list in mcentral. Since the span is empty, it will not be cached in
 		// mcache.
-		c := &mheap_.central[isPersistent][spc].mcentral
+		// TODO fix the mcentral index
+		c := &mheap_.central[isPersistent][spc][0].mcentral
 		lock(&c.lock)
 		c.empty.insertBack(s)
 		unlock(&c.lock)

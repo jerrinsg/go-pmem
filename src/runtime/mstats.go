@@ -544,7 +544,7 @@ func updatememstats() {
 	for spc := range mheap_.central[isNotPersistent] {
 		// The mcaches are now empty, so mcentral stats are
 		// up-to-date.
-		c := &mheap_.central[isNotPersistent][spc].mcentral
+		c := &mheap_.central[isNotPersistent][spc][0].mcentral
 		memstats.nmalloc += c.nmalloc
 		i := spanClass(spc).sizeclass()
 		memstats.by_size[i].nmalloc += c.nmalloc

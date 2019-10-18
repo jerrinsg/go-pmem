@@ -312,6 +312,62 @@ const (
 	minLegalPointer uintptr = 4096
 )
 
+// map between type and a constant
+func typeIndex(typ *_type) int {
+	switch typ.hash {
+	case 1958318709: // redis.entry (1) 9672059
+		return 1
+
+	case 1231536609, 942571231: // []pmem.namedObject, []uint8 (2) 2000001
+		return 2
+
+	case 2912989429: // redis.eI2 187405
+		return 3
+
+	case 4129549170: // transaction.entry (3) 1024
+		return 4
+
+	case 1411583090: // transaction.undoTx (4) 512
+		return 5
+
+	case 1978800597: // transaction.redoTx (5) 512
+		return 6
+
+	default:
+		return 0
+
+		/*
+			case 1550986020: // redis.table (6) 19
+				return 7
+
+			case 3152579922: // pmem.namedObject 3
+				return 8
+
+			case 2351731113: // pmem.pmemHeader 1
+				return 9
+
+			case 4067433366: // redis.dict 11
+				return 10
+
+			case 2119665191: // *redis.entry 10
+				return 11
+
+			case 4028251267: // redis.redisDb 2
+				return 12
+
+			case 3005105370: // transaction.redoTxHeader 1
+				return 13
+
+			case 3561485895: // transaction.undoTxHeader 1
+				return 14
+		*/
+	}
+
+	println("type = ", typ.string(), " hash = ", typ.hash)
+	throw("Unknow type")
+	return 0
+}
+
 // physPageSize is the size in bytes of the OS's physical pages.
 // Mapping and unmapping operations must be done at multiples of
 // physPageSize.
@@ -765,8 +821,10 @@ func nextFreeFast(s *mspan) gclinkptr {
 // c could change.
 // The memtype parameter indicates if the allocation request is for persistent memory
 // or volatile memory
-func (c *mcache) nextFree(spc spanClass, memtype int) (v gclinkptr, s *mspan, shouldhelpgc bool) {
-	s = c.alloc[memtype][spc]
+func (c *mcache) nextFree(spc spanClass, metadata int) (v gclinkptr, s *mspan, shouldhelpgc bool) {
+	typeInd := metadata >> 1
+	memtype := metadata & 1
+	s = c.alloc[memtype][spc][typeInd]
 	shouldhelpgc = false
 	freeIndex := s.nextFreeIndex()
 	if freeIndex == s.nelems {
@@ -775,9 +833,9 @@ func (c *mcache) nextFree(spc spanClass, memtype int) (v gclinkptr, s *mspan, sh
 			println("runtime: s.allocCount=", s.allocCount, "s.nelems=", s.nelems)
 			throw("s.allocCount != s.nelems && freeIndex == s.nelems")
 		}
-		c.refill(spc, memtype)
+		c.refill(spc, metadata)
 		shouldhelpgc = true
-		s = c.alloc[memtype][spc]
+		s = c.alloc[memtype][spc][typeInd]
 
 		freeIndex = s.nextFreeIndex()
 	}
@@ -871,6 +929,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
 
+	typInd := 0
+	if memtype == isPersistent && noscan == false {
+		typInd = typeIndex(typ)
+	}
+
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
 			// Tiny allocator.
@@ -921,12 +984,14 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span = c.alloc[memtype][tinySpanClass]
+			span = c.alloc[memtype][tinySpanClass][typInd]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, span, shouldhelpgc = c.nextFree(tinySpanClass, memtype)
+				metadata := typInd<<1 | memtype
+				v, span, shouldhelpgc = c.nextFree(tinySpanClass, metadata)
 				newSpan = true
 			}
+
 			x = unsafe.Pointer(v)
 			(*[2]uint64)(x)[0] = 0
 			(*[2]uint64)(x)[1] = 0
@@ -946,12 +1011,14 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span = c.alloc[memtype][spc]
+			span = c.alloc[memtype][spc][typInd]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, span, shouldhelpgc = c.nextFree(spc, memtype)
+				metadata := typInd<<1 | memtype
+				v, span, shouldhelpgc = c.nextFree(spc, metadata)
 				newSpan = true
 			}
+
 			x = unsafe.Pointer(v)
 			if needzero && span.needzero != 0 {
 				memclrNoHeapPointers(unsafe.Pointer(v), size)
@@ -967,6 +1034,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		x = unsafe.Pointer(span.base())
 		size = span.elemsize
 		newSpan = true
+	}
+
+	if newSpan {
+		span.typIndex = typInd
 	}
 
 	if newSpan && memtype == isPersistent {
@@ -993,7 +1064,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		if typ == deferType {
 			dataSize = unsafe.Sizeof(_defer{})
 		}
-		heapBitsSetType(uintptr(x), size, dataSize, typ, memtype == isPersistent)
+
+		heapBitsSetType(uintptr(x), size, dataSize, typ, (newSpan || typInd == 0) && memtype == isPersistent)
 		if dataSize > typ.size {
 			// Array allocation. If there are any
 			// pointers, GC has to scan to the last

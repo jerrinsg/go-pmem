@@ -77,8 +77,9 @@ func (f *fixalloc) alloc() unsafe.Pointer {
 		return v
 	}
 	if uintptr(f.nchunk) < f.size {
-		f.chunk = uintptr(persistentalloc(_FixAllocChunk, 0, f.stat))
-		f.nchunk = _FixAllocChunk
+		allocationSize := uintptr(_FixAllocChunk << 2)
+		f.chunk = uintptr(persistentalloc(allocationSize, 0, f.stat))
+		f.nchunk = uint32(allocationSize)
 	}
 
 	v := unsafe.Pointer(f.chunk)

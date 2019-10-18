@@ -467,6 +467,18 @@ func reflect_typelinks() ([]unsafe.Pointer, [][]int32) {
 	return sections, ret
 }
 
+func Print_Types() {
+	sections, offset := reflect_typelinks()
+	for i, s := range sections {
+		for _, t := range offset[i] {
+			typ := (*_type)(unsafe.Pointer(uintptr(s) + uintptr(t)))
+			if typ.kind&kindNoPointers == 0 {
+				println("Type name = ", typ.string(), " hash = ", typ.hash)
+			}
+		}
+	}
+}
+
 // reflect_resolveNameOff resolves a name offset from a base pointer.
 //go:linkname reflect_resolveNameOff reflect.resolveNameOff
 func reflect_resolveNameOff(ptrInModule unsafe.Pointer, off int32) unsafe.Pointer {
