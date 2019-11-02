@@ -54,12 +54,14 @@ type Value struct {
 	// nor a slot on Go stack, and the generation of this value is delayed to its use time.
 	OnWasmStack bool
 
+	// transaction related identifiers
 	StoreWithinTx bool
 	LoadWithinTx  bool
+	LogThisStore  bool
+	InPmem        bool
+	InVheap       bool
+	TxHandle      *Value
 
-	LogThisStore bool
-	InPmem bool
-	TxHandle *Value
 	// Storage for the first three args
 	argstorage [3]*Value
 }
