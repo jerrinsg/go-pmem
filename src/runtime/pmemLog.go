@@ -134,9 +134,12 @@ func logSpanFree(s *mspan) {
 
 // A helper function to compute the value that should be logged to record the
 // allocation of span s.
-// For a small span, the value logged is -
-// ((s.spc) << 1 | s.needzero) and for a large span the value logged is -
-// ((66+s.npages-4) << 2 | s.spc << 1 | s.needzero)
+// For a small span, the value logged is (s.spc << 1 | optTypeLog | s.needzero)
+// and for a large span the value logged is -
+// ((66+s.npages-4) << 2 | s.spc << 1 | s.needzero).
+// optTypeLog bit indicates that the heap type bits logged for this span is an
+// optimized representation - only the first object in the span has its type
+// bits logged. All other objects in the span have the same type representation.
 func spanLogValue(s *mspan) uint32 {
 	var logVal uintptr
 	if s.elemsize > maxSmallSize { // large allocation
