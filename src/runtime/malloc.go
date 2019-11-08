@@ -312,8 +312,24 @@ const (
 	minLegalPointer uintptr = 4096
 )
 
+var typeArray [25]uint32
+var tInd int
+
 // map between type and a constant
 func typeIndex(typ *_type) int {
+	found := false
+	for j := 0; j < tInd; j++ {
+		if typeArray[j] == typ.hash {
+			found = true
+			break
+		}
+	}
+	if found == false {
+		typeArray[tInd] = typ.hash
+		tInd++
+		println(typ.string(), " stored at ", unsafe.Pointer(typ), " - ", typ.hash)
+	}
+
 	switch typ.hash {
 	case 1958318709: // redis.entry (1) 9672059
 		return 1
@@ -1036,11 +1052,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		newSpan = true
 	}
 
-	if newSpan {
-		span.typIndex = typInd
-	}
-
 	if newSpan && memtype == isPersistent {
+		span.typIndex = typInd
 		logSpanAlloc(span)
 		if noscan {
 			// This is a noscan (no pointer in object) object allocation request.

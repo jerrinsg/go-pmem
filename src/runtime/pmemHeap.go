@@ -43,10 +43,10 @@ const (
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
 
-	// The maximum value that will logged in span bitmap corresponding to a small span.
-	// This is when the spanclass of the span is 133 and its needzero parameter
-	// is 1.
-	maxSmallSpanLogVal = (maxSmallSpanclass << 1) + 1
+	// The maximum value that will logged in span bitmap corresponding to a
+	// small span. This is when the spanclass of the span is 133 and its
+	// needzero and optTypeLog bit is 1.
+	maxSmallSpanLogVal = (maxSmallSpanclass << 2) + (1 << 1) + 1
 
 	// The effective permission of the created persistent memory file is
 	// (mode & ~umask) where umask is the system wide umask.
