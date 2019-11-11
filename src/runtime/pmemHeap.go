@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"runtime"
 	"runtime/internal/atomic"
 	"unsafe"
 )
@@ -40,6 +41,9 @@ const (
 
 	maxTypes = 8
 
+	// The number of types that we want to cache separately in the mcache
+	maxCacheTypes = 5
+
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
 
@@ -78,6 +82,15 @@ type pHeader struct {
 	// If pointers are currently being swizzled, swizzleState captures the current
 	// swizzling state.
 	swizzleState int
+
+	// Up to maxCacheTypes types are cached separately in the persistent memory
+	// mcache to minimize the amount of metadata that we log during each
+	// allocation. typeMap is used to persistently store the relationship
+	// between a cached type and its index within the cache.
+	// typeMap[i] stores the pointer to the type (in RODATA section) cached at
+	// index i. In mcache, index 1 is always used to allocate slices, so we need
+	// to persist the mapping only for maxCacheTypes - 1 number of entries.
+	typeMap [maxCacheTypes - 1]uintptr
 }
 
 // Strucutre of a persistent memory arena header
@@ -856,4 +869,63 @@ func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr 
 
 	off := offsetTable[ind]
 	return uintptr(int(ptr) + off)
+}
+
+var typAssigns [50000]int
+var typProf [50000]uint64
+var numAssigned uint64
+var typeBase uintptr
+
+func init() {
+	numAssigned = 1
+	// sections, _ := reflect_typelinks()
+	// typeBase = uintptr(unsafe.Pointer(sections[0])) // can be assigned from the
+	// reflect function itself.. or wherever it is first computed
+}
+
+// map between type and a constant
+func typeIndex(typ *_type) int {
+	// Slices are always cached at index 1
+	if typ.kind&kindSlice == kindSlice {
+		return 1
+	}
+
+	tu := uintptr(unsafe.Pointer(typ))
+	typOffset := (tu - typeBase) / 64
+
+	if typOffset >= 50000 {
+		println("typ = ", unsafe.Pointer(typ), " typeBase = ", unsafe.Pointer(typeBase), " index = ", typOffset)
+		throw("Index overflow")
+	}
+
+	// Coming from the restart path -> set the count as 100 during re-init
+retry:
+	curVal := typProf[typOffset]
+	if curVal == 100 {
+		// some threads might still get the value as 0, it is ok
+		return typAssigns[typOffset]
+	}
+	if atomic.Cas64(&typProf[typOffset], curVal, curVal+1) == false {
+		goto retry
+	}
+	if curVal+1 == 100 {
+	retryAssign:
+		nA := numAssigned
+		if nA == 5 { // used all cached entries
+			return 0
+		}
+		if atomic.Cas64(&numAssigned, nA, nA+1) == false {
+			goto retryAssign
+		}
+		println("TYPE ", typ.string(), " assigned slot ", nA+1)
+		typAssigns[typOffset] = int(nA + 1)
+
+		// store the mapping persistently
+		pmemHeader.typeMap[nA-1] = uintptr(unsafe.Pointer(typ))
+		runtime.PersistRange(unsafe.Pointer(&pmemHeader.typeMap[nA-1]), intSize)
+
+		return typAssigns[typOffset]
+	}
+
+	return 0
 }

@@ -28,22 +28,32 @@ const (
 // and will help GC identify which addresses in the reconstructed persistent memory
 // region has pointers.
 func logHeapBits(addr uintptr, startByte, endByte *byte) {
-	span := spanOf(addr)
+	span := spanOfUnchecked(addr)
 	if span.memtype != isPersistent {
 		throw("Invalid heap type bits logging request")
 	}
 
 	pArena := (*pArena)(unsafe.Pointer(span.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
-	dstAddr := pmemHeapBitsAddr(addr, pArena)
+	numPersistBytes := numHeapBytes
+
+	logAddr := pmemHeapBitsAddr(addr, pArena)
+	persistAddr := logAddr
+
+	if span.typIndex != 0 {
+		// memcpy the type identifier at this location
+		memmove(logAddr, unsafe.Pointer(&span.typIndex), intSize)
+		logAddr = unsafe.Pointer(uintptr(logAddr) + intSize)
+		numPersistBytes += 8
+	}
 
 	// From heapBitsSetType():
 	// There can only be one allocation from a given span active at a time,
 	// and the bitmap for a span always falls on byte boundaries,
 	// so there are no write-write races for access to the heap bitmap.
 	// Hence, heapBitsSetType can access the bitmap without atomics.
-	memmove(dstAddr, unsafe.Pointer(startByte), numHeapBytes)
-	PersistRange(dstAddr, numHeapBytes)
+	memmove(logAddr, unsafe.Pointer(startByte), numHeapBytes)
+	PersistRange(persistAddr, numPersistBytes)
 }
 
 // clearHeapBits clears the logged heap type bits for the object allocated at
@@ -143,15 +153,12 @@ func logSpanFree(s *mspan) {
 // representation.
 // optTypeLog bit is currently unused for a large span.
 func spanLogValue(s *mspan) uint32 {
-	optTypeLog := 0
 	logVal := uintptr(0)
 	if s.elemsize > maxSmallSize { // large allocation
 		npages := s.elemsize >> pageShift
 		logVal = (66+npages-4)<<3 | uintptr(s.spanclass)<<2 | uintptr(s.needzero)
 	} else {
-		if s.typIndex != 0 {
-			optTypeLog = 1
-		}
+		optTypeLog := bool2int(s.typIndex != 0)
 		logVal = uintptr(s.spanclass)<<2 | uintptr(optTypeLog)<<1 | uintptr(s.needzero)
 	}
 	return uint32(logVal)

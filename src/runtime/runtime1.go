@@ -470,13 +470,13 @@ func reflect_typelinks() ([]unsafe.Pointer, [][]int32) {
 func Print_Types() {
 	modules := activeModules()
 	sections, offset := reflect_typelinks()
+	println("sections address = ", unsafe.Pointer(sections[0]))
 	for i, s := range sections {
 		println("\n\nMODULE == ", modules[i].modulename)
 		for _, t := range offset[i] {
-			//typ := (*_type)(unsafe.Pointer(uintptr(s) + uintptr(t)))
-			typ := (unsafe.Pointer(uintptr(s) + uintptr(t)))
-			println(typ)
-			//println(typ.string(), "stored at ", unsafe.Pointer(typ), " hash = ", typ.hash, " kind = ", typ.kind)
+			typ := (*_type)(unsafe.Pointer(uintptr(s) + uintptr(t)))
+			//println(typ.string(), " - slice? ", typ.kind&kindSlice == kindSlice)
+			println(typ.string(), "stored at ", unsafe.Pointer(typ), " hash = ", typ.hash, " kind = ", typ.kind)
 			/*print(" array - ", typ.kind&kindArray == kindArray, " ")
 			print(" chan - ", typ.kind&kindChan == kindChan, " ")
 			print(" func - ", typ.kind&kindFunc == kindFunc, " ")
