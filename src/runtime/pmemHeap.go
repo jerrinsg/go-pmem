@@ -810,9 +810,9 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 		s := spanOfUnchecked(addr)
 		end := s.base() + (s.npages << pageShift)
 
-		// This span is not in-use. Hence no pointers within the span need to
-		// be swizzled.
-		if s.state != mSpanInUse {
+		// If the span is not in-use or if the span is known to not contain any
+		// pointers, then swizzling can be skipped on this span.
+		if s.state != mSpanInUse || s.spanclass.noscan() {
 			rem := (end - addr)
 			done += rem
 			continue

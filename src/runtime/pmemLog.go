@@ -56,27 +56,6 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 	PersistRange(persistAddr, numPersistBytes)
 }
 
-// clearHeapBits clears the logged heap type bits for the object allocated at
-// address 'addr' and occupying 'size' bytes.
-// The allocator tries to reuse memory regions if possible to satisfy allocation
-// requests. If the reused regions do not contain pointers, then the heap type
-// bits need to be cleared. This is because for swizzling pointers, the runtime
-// need to be exactly sure what regions are static data and what regions contain
-// pointers.
-// This function expects size to be a multiple of bytesPerBitmapByte.
-func clearHeapBits(addr uintptr, size uintptr) {
-	span := spanOf(addr)
-	if span.memtype != isPersistent {
-		throw("Invalid heap type bits logging request")
-	}
-
-	pArena := (*pArena)(unsafe.Pointer(span.pArena))
-	heapBitsAddr := pmemHeapBitsAddr(addr, pArena)
-	numTypeBytes := size / bytesPerBitmapByte
-	memclrNoHeapPointers(heapBitsAddr, numTypeBytes)
-	PersistRange(heapBitsAddr, numTypeBytes)
-}
-
 // pmemHeapBitsAddr returns the address in persistent memory where heap type
 // bitmap will be logged corresponding to virtual address 'x'
 func pmemHeapBitsAddr(x uintptr, pa *pArena) unsafe.Pointer {
