@@ -113,7 +113,7 @@ func logSpanAlloc(s *mspan) {
 		// We clear the span bitmap when a span is freed. Since the entry still
 		// exists, this means that the span is getting reused. Hence, the first
 		// 30 bits of the entry should match with the corresponding value to be
-		// logged. The last bit need not be the same as needzero bit or the
+		// logged. The last two bits need not be the same as needzero bit or the
 		// optTypeLog bit can change as spans get reused.
 		// compare the first 30 bits
 		if bitmapVal>>2 != logVal>>2 {

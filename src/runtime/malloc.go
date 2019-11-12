@@ -980,10 +980,26 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		newSpan = true
 	}
 
+	if memtype == isPersistent {
+		if span.typIndex != typInd && newSpan == false {
+			println("current typIndex = ", span.typIndex, " new typ = ", typInd, " newspan? ", newSpan)
+		}
+	}
+
+	if span.memtype != memtype {
+		throw("Got invalid span type")
+	}
+
+	objIndex := (uintptr(x) - span.base()) / span.elemsize
+	if newSpan && memtype == isPersistent && objIndex != 0 {
+		//println("Got new span and objIndex != 0 !!!!!!!!")
+	}
+
+	span.typIndex = typInd
 	if newSpan && memtype == isPersistent {
-		span.typIndex = typInd
 		logSpanAlloc(span)
 		if noscan {
+			println("\n\nHIT NOSCAN\n\n")
 			// maybe this is not required. TODO
 
 			// This is a noscan (no pointer in object) object allocation request.

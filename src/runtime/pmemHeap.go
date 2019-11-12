@@ -375,7 +375,11 @@ func (ar *arenaInfo) reconstruct() {
 		} else {
 			s := createSpan(sval, addr)
 			s.pArena = (uintptr)(unsafe.Pointer(pa))
-			ar.restoreSpanHeapBits(s)
+			// The heap type bits need to be restored only if the span is known
+			// to have pointers in it.
+			if !s.spanclass.noscan() {
+				ar.restoreSpanHeapBits(s)
+			}
 			i += s.npages
 		}
 	}
@@ -593,6 +597,7 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	if s.typIndex != 0 {
 		typAddr := pmemHeapBitsAddr(spanAddr, parena)
 		s.typIndex = *(*int)(typAddr)
+		println("Read back typIndex as ", s.typIndex)
 		srcAddr = unsafe.Pointer(uintptr(typAddr) + intSize)
 	}
 
@@ -614,6 +619,8 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 			srcAddr = pmemHeapBitsAddr(spanAddr, parena)
 		}
 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
+
+		// the memcpy logic here is wrong..
 		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
 
 		copied += (numSpanBytes / bytesPerBitmapByte)

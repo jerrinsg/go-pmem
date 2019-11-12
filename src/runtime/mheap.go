@@ -1323,6 +1323,7 @@ func (span *mspan) init(base uintptr, npages uintptr) {
 	// Initialize the span memory type as volatile memory. This will be changed
 	// explicitly if the span is to be used for persistent memory.
 	span.memtype = isNotPersistent
+	span.typIndex = 0
 }
 
 func (span *mspan) inList() bool {

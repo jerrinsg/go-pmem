@@ -1,0 +1,231 @@
+From bb019c6f7e2d994005da06b95268fb986e3d0d20 Mon Sep 17 00:00:00 2001
+From: Jerrin Shaji George <jshajigeorge@vmware.com>
+Date: Tue, 12 Nov 2019 11:15:46 -0800
+Subject: [PATCH] wip3
+
+---
+ src/0001-wip3.patch     | 117 ++++++++++++++++++++++++++++++++++++++++
+ src/runtime/malloc.go   |  18 ++++++-
+ src/runtime/mheap.go    |   1 +
+ src/runtime/pmemHeap.go |   9 +++-
+ src/runtime/pmemLog.go  |   2 +-
+ 5 files changed, 144 insertions(+), 3 deletions(-)
+ create mode 100644 src/0001-wip3.patch
+
+diff --git a/src/0001-wip3.patch b/src/0001-wip3.patch
+new file mode 100644
+index 0000000000..c117725f63
+--- /dev/null
++++ b/src/0001-wip3.patch
+@@ -0,0 +1,117 @@
++From 9e4271c2bcdb27a29f3a03ad9874e0e3b873f913 Mon Sep 17 00:00:00 2001
++From: Jerrin Shaji George <jshajigeorge@vmware.com>
++Date: Tue, 12 Nov 2019 11:15:46 -0800
++Subject: [PATCH] wip3
++
++---
++ src/runtime/malloc.go   | 18 +++++++++++++++++-
++ src/runtime/mheap.go    |  1 +
++ src/runtime/pmemHeap.go |  9 ++++++++-
++ src/runtime/pmemLog.go  |  6 +++++-
++ 4 files changed, 31 insertions(+), 3 deletions(-)
++
++diff --git a/src/runtime/malloc.go b/src/runtime/malloc.go
++index 6a84fb39ca..f9d8e29690 100644
++--- a/src/runtime/malloc.go
+++++ b/src/runtime/malloc.go
++@@ -980,10 +980,26 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
++ 		newSpan = true
++ 	}
++ 
+++	if memtype == isPersistent {
+++		if span.typIndex != typInd && newSpan == false {
+++			println("current typIndex = ", span.typIndex, " new typ = ", typInd, " newspan? ", newSpan)
+++		}
+++	}
+++
+++	if span.memtype != memtype {
+++		throw("Got invalid span type")
+++	}
+++
+++	objIndex := (uintptr(x) - span.base()) / span.elemsize
+++	if newSpan && memtype == isPersistent && objIndex != 0 {
+++		//println("Got new span and objIndex != 0 !!!!!!!!")
+++	}
+++
+++	span.typIndex = typInd
++ 	if newSpan && memtype == isPersistent {
++-		span.typIndex = typInd
++ 		logSpanAlloc(span)
++ 		if noscan {
+++			println("\n\nHIT NOSCAN\n\n")
++ 			// maybe this is not required. TODO
++ 
++ 			// This is a noscan (no pointer in object) object allocation request.
++diff --git a/src/runtime/mheap.go b/src/runtime/mheap.go
++index abacc526ad..705376a5de 100644
++--- a/src/runtime/mheap.go
+++++ b/src/runtime/mheap.go
++@@ -1323,6 +1323,7 @@ func (span *mspan) init(base uintptr, npages uintptr) {
++ 	// Initialize the span memory type as volatile memory. This will be changed
++ 	// explicitly if the span is to be used for persistent memory.
++ 	span.memtype = isNotPersistent
+++	span.typIndex = 0
++ }
++ 
++ func (span *mspan) inList() bool {
++diff --git a/src/runtime/pmemHeap.go b/src/runtime/pmemHeap.go
++index 33fba74efe..3858bc54ef 100644
++--- a/src/runtime/pmemHeap.go
+++++ b/src/runtime/pmemHeap.go
++@@ -375,7 +375,11 @@ func (ar *arenaInfo) reconstruct() {
++ 		} else {
++ 			s := createSpan(sval, addr)
++ 			s.pArena = (uintptr)(unsafe.Pointer(pa))
++-			ar.restoreSpanHeapBits(s)
+++			// The heap type bits need to be restored only if the span is known
+++			// to have pointers in it.
+++			if !s.spanclass.noscan() {
+++				ar.restoreSpanHeapBits(s)
+++			}
++ 			i += s.npages
++ 		}
++ 	}
++@@ -588,6 +592,7 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
++ 	if s.typIndex != 0 {
++ 		typAddr := pmemHeapBitsAddr(spanAddr, parena)
++ 		s.typIndex = *(*int)(typAddr)
+++		println("Read back typIndex as ", s.typIndex)
++ 		srcAddr = unsafe.Pointer(uintptr(typAddr) + intSize)
++ 	}
++ 
++@@ -609,6 +614,8 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
++ 			srcAddr = pmemHeapBitsAddr(spanAddr, parena)
++ 		}
++ 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
+++
+++		// the memcpy logic here is wrong..
++ 		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
++ 
++ 		copied += (numSpanBytes / bytesPerBitmapByte)
++diff --git a/src/runtime/pmemLog.go b/src/runtime/pmemLog.go
++index 4e6ce25d67..794c042595 100644
++--- a/src/runtime/pmemLog.go
+++++ b/src/runtime/pmemLog.go
++@@ -113,7 +113,7 @@ func logSpanAlloc(s *mspan) {
++ 		// We clear the span bitmap when a span is freed. Since the entry still
++ 		// exists, this means that the span is getting reused. Hence, the first
++ 		// 30 bits of the entry should match with the corresponding value to be
++-		// logged. The last bit need not be the same as needzero bit or the
+++		// logged. The last two bits need not be the same as needzero bit or the
++ 		// optTypeLog bit can change as spans get reused.
++ 		// compare the first 30 bits
++ 		if bitmapVal>>2 != logVal>>2 {
++@@ -130,6 +130,10 @@ func logSpanAlloc(s *mspan) {
++ 	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
++ }
++ 
+++func GetValues() (total, skipped, written int64) {
+++	return numTotal, numSkipped, numWritten
+++}
+++
++ // Function to log that a span has been completely freed. This is done by
++ // writing 0 to the bitmap entry corresponding to this span.
++ func logSpanFree(s *mspan) {
++-- 
++2.17.1
++
+diff --git a/src/runtime/malloc.go b/src/runtime/malloc.go
+index 6a84fb39ca..f9d8e29690 100644
+--- a/src/runtime/malloc.go
++++ b/src/runtime/malloc.go
+@@ -980,10 +980,26 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
+ 		newSpan = true
+ 	}
+ 
++	if memtype == isPersistent {
++		if span.typIndex != typInd && newSpan == false {
++			println("current typIndex = ", span.typIndex, " new typ = ", typInd, " newspan? ", newSpan)
++		}
++	}
++
++	if span.memtype != memtype {
++		throw("Got invalid span type")
++	}
++
++	objIndex := (uintptr(x) - span.base()) / span.elemsize
++	if newSpan && memtype == isPersistent && objIndex != 0 {
++		//println("Got new span and objIndex != 0 !!!!!!!!")
++	}
++
++	span.typIndex = typInd
+ 	if newSpan && memtype == isPersistent {
+-		span.typIndex = typInd
+ 		logSpanAlloc(span)
+ 		if noscan {
++			println("\n\nHIT NOSCAN\n\n")
+ 			// maybe this is not required. TODO
+ 
+ 			// This is a noscan (no pointer in object) object allocation request.
+diff --git a/src/runtime/mheap.go b/src/runtime/mheap.go
+index abacc526ad..705376a5de 100644
+--- a/src/runtime/mheap.go
++++ b/src/runtime/mheap.go
+@@ -1323,6 +1323,7 @@ func (span *mspan) init(base uintptr, npages uintptr) {
+ 	// Initialize the span memory type as volatile memory. This will be changed
+ 	// explicitly if the span is to be used for persistent memory.
+ 	span.memtype = isNotPersistent
++	span.typIndex = 0
+ }
+ 
+ func (span *mspan) inList() bool {
+diff --git a/src/runtime/pmemHeap.go b/src/runtime/pmemHeap.go
+index 33fba74efe..3858bc54ef 100644
+--- a/src/runtime/pmemHeap.go
++++ b/src/runtime/pmemHeap.go
+@@ -375,7 +375,11 @@ func (ar *arenaInfo) reconstruct() {
+ 		} else {
+ 			s := createSpan(sval, addr)
+ 			s.pArena = (uintptr)(unsafe.Pointer(pa))
+-			ar.restoreSpanHeapBits(s)
++			// The heap type bits need to be restored only if the span is known
++			// to have pointers in it.
++			if !s.spanclass.noscan() {
++				ar.restoreSpanHeapBits(s)
++			}
+ 			i += s.npages
+ 		}
+ 	}
+@@ -588,6 +592,7 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
+ 	if s.typIndex != 0 {
+ 		typAddr := pmemHeapBitsAddr(spanAddr, parena)
+ 		s.typIndex = *(*int)(typAddr)
++		println("Read back typIndex as ", s.typIndex)
+ 		srcAddr = unsafe.Pointer(uintptr(typAddr) + intSize)
+ 	}
+ 
+@@ -609,6 +614,8 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
+ 			srcAddr = pmemHeapBitsAddr(spanAddr, parena)
+ 		}
+ 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
++
++		// the memcpy logic here is wrong..
+ 		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
+ 
+ 		copied += (numSpanBytes / bytesPerBitmapByte)
+diff --git a/src/runtime/pmemLog.go b/src/runtime/pmemLog.go
+index 4e6ce25d67..e7c6664fae 100644
+--- a/src/runtime/pmemLog.go
++++ b/src/runtime/pmemLog.go
+@@ -113,7 +113,7 @@ func logSpanAlloc(s *mspan) {
+ 		// We clear the span bitmap when a span is freed. Since the entry still
+ 		// exists, this means that the span is getting reused. Hence, the first
+ 		// 30 bits of the entry should match with the corresponding value to be
+-		// logged. The last bit need not be the same as needzero bit or the
++		// logged. The last two bits need not be the same as needzero bit or the
+ 		// optTypeLog bit can change as spans get reused.
+ 		// compare the first 30 bits
+ 		if bitmapVal>>2 != logVal>>2 {
+-- 
+2.17.1
+
