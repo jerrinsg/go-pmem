@@ -38,10 +38,8 @@ const (
 	// and volatile memory.
 	maxMemTypes = 2
 
-	maxTypes = 8
-
 	// The number of types that we want to cache separately in the mcache
-	maxCacheTypes = 5
+	maxTypes = 6
 
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
@@ -82,14 +80,14 @@ type pHeader struct {
 	// swizzling state.
 	swizzleState int
 
-	// Up to maxCacheTypes types are cached separately in the persistent memory
+	// Up to maxTypes types are cached separately in the persistent memory
 	// mcache to minimize the amount of metadata that we log during each
 	// allocation. typeMap is used to persistently store the relationship
 	// between a cached type and its index within the cache.
 	// typeMap[i] stores the pointer to the type (in RODATA section) cached at
 	// index i. In mcache, index 1 is always used to allocate slices, so we need
-	// to persist the mapping only for maxCacheTypes - 1 number of entries.
-	typeMap [maxCacheTypes - 1]uintptr
+	// to persist the mapping only for maxTypes - 1 number of entries.
+	typeMap [maxTypes - 1]uintptr
 }
 
 // Strucutre of a persistent memory arena header
@@ -601,6 +599,8 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 		srcAddr = unsafe.Pointer(uintptr(typAddr) + intSize)
 	}
 
+	//	optLogging := s.typIndex != 0
+
 	for copied := uintptr(0); copied < totalBytes; {
 		// each iteration copies heap type bits corresponding to the heap region
 		// between 'spanAddr' and 'endAddr'
@@ -938,7 +938,8 @@ retry:
 		if atomic.Cas64(&numAssigned, nA, nA+1) == false {
 			goto retryAssign
 		}
-		println("TYPE ", typ.string(), " assigned slot ", nA+1)
+		// println("TYPE ", typ.string(), " assigned slot ", nA+1)
+
 		typAssigns[typOffset] = int(nA + 1)
 
 		// store the mapping persistently

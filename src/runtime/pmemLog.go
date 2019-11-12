@@ -33,27 +33,32 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 		throw("Invalid heap type bits logging request")
 	}
 
+	// If this span is used to allocate objects of a particular type then use
+	// an optimized logging approach
+	optLog := span.typIndex != 0
 	pArena := (*pArena)(unsafe.Pointer(span.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
-	numPersistBytes := numHeapBytes
 
-	logAddr := pmemHeapBitsAddr(addr, pArena)
-	persistAddr := logAddr
-
-	if span.typIndex != 0 {
-		// memcpy the type identifier at this location
-		memmove(logAddr, unsafe.Pointer(&span.typIndex), intSize)
-		logAddr = unsafe.Pointer(uintptr(logAddr) + intSize)
-		numPersistBytes += 8
+	if optLog {
+		typAddr := (*int)(pmemHeapBitsAddr(span.base(), pArena))
+		// Write the type index (8 bytes) at the beginning of the log followed
+		// by the heap type bits.
+		if *typAddr != span.typIndex {
+			*typAddr = span.typIndex
+		}
+		logAddr := unsafe.Pointer(uintptr(unsafe.Pointer(typAddr)) + intSize)
+		memmove(logAddr, unsafe.Pointer(startByte), numHeapBytes)
+		PersistRange(unsafe.Pointer(typAddr), numHeapBytes+intSize)
+	} else {
+		logAddr := pmemHeapBitsAddr(addr, pArena)
+		// From heapBitsSetType()
+		// There can only be one allocation from a given span active at a time,
+		// and the bitmap for a span always falls on byte boundaries,
+		// so there are no write-write races for access to the heap bitmap.
+		// Hence, heapBitsSetType can access the bitmap without atomics.
+		memmove(logAddr, unsafe.Pointer(startByte), numHeapBytes)
+		PersistRange(logAddr, numHeapBytes)
 	}
-
-	// From heapBitsSetType():
-	// There can only be one allocation from a given span active at a time,
-	// and the bitmap for a span always falls on byte boundaries,
-	// so there are no write-write races for access to the heap bitmap.
-	// Hence, heapBitsSetType can access the bitmap without atomics.
-	memmove(logAddr, unsafe.Pointer(startByte), numHeapBytes)
-	PersistRange(persistAddr, numPersistBytes)
 }
 
 // pmemHeapBitsAddr returns the address in persistent memory where heap type
