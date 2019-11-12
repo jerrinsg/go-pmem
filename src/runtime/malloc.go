@@ -984,6 +984,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		span.typIndex = typInd
 		logSpanAlloc(span)
 		if noscan {
+			// maybe this is not required. TODO
+
 			// This is a noscan (no pointer in object) object allocation request.
 			// We do not clear heap type bits on each noscan object allocation
 			// request. Instead, when a new span is allocated to satisfy the

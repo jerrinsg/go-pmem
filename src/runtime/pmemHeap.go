@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"runtime"
 	"runtime/internal/atomic"
 	"unsafe"
 )
@@ -389,17 +388,22 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 	var npages uintptr
 	var spc spanClass
 	large := false
-	needzero := ((sVal & 1) == 1)
+	needzero := (sVal & 1) == 1
 	if sVal > maxSmallSpanLogVal { // large allocation
 		large = true
-		noscan := ((sVal >> 1 & 1) == 1)
-		npages = uintptr((sVal >> 2) - 66 + 4)
+		noscan := (sVal >> 2 & 1) == 1
+		npages = uintptr((sVal >> 3) - 66 + 4)
 		spc = makeSpanClass(0, noscan)
 	} else {
-		npages = uintptr(class_to_allocnpages[sVal>>2])
-		spc = spanClass(sVal >> 1)
+		npages = uintptr(class_to_allocnpages[sVal>>3])
+		spc = spanClass(sVal >> 2)
 	}
-	return createSpanCore(spc, baseAddr, npages, large, needzero)
+	s := createSpanCore(spc, baseAddr, npages, large, needzero)
+	// If the span uses optimized heap type bit logging, set typIndex as 1. This
+	// will be set as the proper type index in restoreSpanHeapBits().
+	s.typIndex = bool2int(sVal>>1&1 != 0)
+
+	return s
 }
 
 // createSpanCore creates a span corresponding to memory region beginning at
@@ -584,6 +588,14 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
 
+	var srcAddr unsafe.Pointer
+
+	if s.typIndex != 0 {
+		typAddr := pmemHeapBitsAddr(spanAddr, parena)
+		s.typIndex = *(*int)(typAddr)
+		srcAddr = unsafe.Pointer(uintptr(typAddr) + intSize)
+	}
+
 	for copied := uintptr(0); copied < totalBytes; {
 		// each iteration copies heap type bits corresponding to the heap region
 		// between 'spanAddr' and 'endAddr'
@@ -591,14 +603,16 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 		arenaEnd := arenaBase(ai) + heapArenaBytes
 		endAddr := arenaEnd
 		// Since a span can span across two arenas, the end adress to be used to
-		// copy the heap type bits is the minimium of the span end address and the
-		// arena end address.
+		// copy the heap type bits is the minimium of the span end address and
+		// the arena end address.
 		if spanEnd < endAddr {
 			endAddr = spanEnd
 		}
 
 		numSpanBytes := (endAddr - spanAddr)
-		srcAddr := pmemHeapBitsAddr(spanAddr, parena)
+		if s.typIndex != 0 {
+			srcAddr = pmemHeapBitsAddr(spanAddr, parena)
+		}
 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
 		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
 
@@ -878,8 +892,8 @@ var typeBase uintptr
 
 func init() {
 	numAssigned = 1
-	// sections, _ := reflect_typelinks()
-	// typeBase = uintptr(unsafe.Pointer(sections[0])) // can be assigned from the
+	sections, _ := reflect_typelinks()
+	typeBase = uintptr(unsafe.Pointer(sections[0])) // can be assigned from the
 	// reflect function itself.. or wherever it is first computed
 }
 
@@ -922,7 +936,7 @@ retry:
 
 		// store the mapping persistently
 		pmemHeader.typeMap[nA-1] = uintptr(unsafe.Pointer(typ))
-		runtime.PersistRange(unsafe.Pointer(&pmemHeader.typeMap[nA-1]), intSize)
+		PersistRange(unsafe.Pointer(&pmemHeader.typeMap[nA-1]), intSize)
 
 		return typAssigns[typOffset]
 	}
