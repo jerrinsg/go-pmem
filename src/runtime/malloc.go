@@ -797,12 +797,23 @@ func (c *mcache) nextFree(spc spanClass, metadata int) (v gclinkptr, s *mspan, s
 	return
 }
 
+var shouldPrint bool
+
+func EnablePrint() {
+	shouldPrint = true
+}
+
+func DisablePrint() {
+	shouldPrint = false
+}
+
 // Allocate an object of size bytes.
 // Small objects are allocated from the per-P cache's free lists.
 // Large objects (> 32 kB) are allocated straight from the heap.
 // The memtype parameter indicates if memory has to be allocated
 // from volatile heap or persistent heap.
 func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Pointer {
+	origAllocSize := size
 	if memtype == isPersistent && pmemInfo.initState != initDone {
 		throw("Allocation before initializing persistent memory")
 	}
@@ -987,6 +998,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 	if newSpan && memtype == isPersistent {
 		span.typIndex = typInd
 		logSpanAlloc(span)
+		if shouldPrint {
+			println("Allocation request for type ", typ.string(), " original allocation size = ", origAllocSize)
+			println("span elemsize = ", span.elemsize)
+		}
 	}
 
 	var scanSize uintptr

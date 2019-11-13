@@ -39,6 +39,20 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 	pArena := (*pArena)(unsafe.Pointer(span.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
 
+	if shouldPrint {
+		hbT := heapBitsForAddr(addr)
+		println("logHeapBits - numHeapBytes = ", numHeapBytes)
+		println("startByte = ", unsafe.Pointer(startByte), " heapBitsForAddr = ", unsafe.Pointer(hbT.bitp))
+		hbits := startByte
+		for i := uintptr(0); i < numHeapBytes; i++ {
+
+			println(*hbits, " - ", (*hbits&(1<<7))>>7, " ", (*hbits&(1<<6))>>6, " ", (*hbits&(1<<5))>>5, " ",
+				(*hbits&(1<<4))>>4, " ", (*hbits&(1<<3))>>3, " ", (*hbits&(1<<2))>>2, " ",
+				(*hbits&(1<<1))>>1, " ", (*hbits & 1))
+			hbits = addb(hbits, 1)
+		}
+	}
+
 	if optLog {
 		typAddr := (*int)(pmemHeapBitsAddr(span.base(), pArena))
 		// Write the type index (8 bytes) at the beginning of the log followed
