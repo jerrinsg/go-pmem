@@ -590,6 +590,8 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
 
+	//var t _type
+
 	var srcAddr unsafe.Pointer
 
 	if s.typIndex != 0 {
@@ -621,7 +623,11 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
 
 		// the memcpy logic here is wrong..
-		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
+		if s.typIndex != 0 {
+
+		} else {
+			memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
+		}
 
 		copied += (numSpanBytes / bytesPerBitmapByte)
 		spanAddr += numSpanBytes
@@ -904,8 +910,47 @@ func init() {
 	// reflect function itself.. or wherever it is first computed
 }
 
+
+var numTypes int64
+var typHashes [50]uint32
+
 // map between type and a constant
 func typeIndex(typ *_type) int {
+/*
+ *    found := false
+ *    for i := 0; i < int(numTypes); i++ {
+ *        if typHashes[i] == typ.hash {
+ *            found = true
+ *            break
+ *        }
+ *    }
+ *
+ *    if !found {
+ *        atomic.Xaddint64(&numTypes, 1)
+ *        typHashes[int(numTypes)-1] = typ.hash
+ *        println("Typ = ", typ.string(), " hash = ", typ.hash)
+ *    }
+ *
+ */
+	//switch typ.hash {
+	//case 1958318709: // redis.entry (1) 9672059
+		//return 1
+	//case 1231536609, 942571231: // []pmem.namedObject, []uint8 (2) 2000001
+		//return 2
+	//case 2912989429: // redis.eI2 187405
+		//return 3
+	//case 4129549170: // transaction.entry (3) 1024
+		//return 4
+	//case 1411583090: // transaction.undoTx (4) 512
+		//return 5
+	//case 1978800597: // transaction.redoTx (5) 512
+		//return 0
+	//case 565663992: // go1.binaryNode
+		//return 1
+	//default:
+		//return 0
+	//}
+
 	// Slices are always cached at index 1
 	if typ.kind&kindSlice == kindSlice {
 		return 1

@@ -126,11 +126,11 @@ func mapHelper(fd int32, flags, len int, off uintptr,
 		// Need to extend the file to map the file
 		// set the length of the file to 'off+len'
 		if err = int(ftruncate(uintptr(fd), uintptr(len)+off)); err != 0 {
-			println("mapFd: ftruncate() failed")
+			println("mapHelper: ftruncate() failed")
 			return
 		}
 		if err = int(fallocate(uintptr(fd), 0, off, uintptr(len))); err != 0 {
-			println("mapFd: fallocate() failed")
+			println("mapHelper: fallocate() failed")
 			return
 		}
 	}
