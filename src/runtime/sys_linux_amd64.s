@@ -15,6 +15,7 @@
 #define SYS_read		0
 #define SYS_write		1
 #define SYS_close		3
+#define SYS_fstat		5
 #define SYS_mmap		9
 #define SYS_munmap		11
 #define SYS_brk 		12
@@ -33,6 +34,8 @@
 #define SYS_exit		60
 #define SYS_kill		62
 #define SYS_fcntl		72
+#define SYS_ftruncate		77
+#define SYS_readlink		89
 #define SYS_sigaltstack 	131
 #define SYS_arch_prctl		158
 #define SYS_gettid		186
@@ -43,8 +46,10 @@
 #define SYS_epoll_ctl		233
 #define SYS_tgkill		234
 #define SYS_openat		257
+#define SYS_unlinkat		263
 #define SYS_faccessat		269
 #define SYS_epoll_pwait		281
+#define SYS_fallocate		285
 #define SYS_epoll_create1	291
 
 TEXT runtime·exit(SB),NOSPLIT,$0-4
@@ -106,6 +111,65 @@ TEXT runtime·read(SB),NOSPLIT,$0-28
 	MOVQ	p+8(FP), SI
 	MOVL	n+16(FP), DX
 	MOVL	$SYS_read, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+24(FP)
+	RET
+
+TEXT runtime·fallocate(SB),NOSPLIT,$0-36
+	MOVQ	fd+0(FP), DI
+	MOVQ	mode+8(FP), SI
+	MOVQ	offset+16(FP), DX
+	MOVQ	len+24(FP), R10
+	MOVL	$SYS_fallocate, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+32(FP)
+	RET
+
+TEXT runtime·ftruncate(SB),NOSPLIT,$0-20
+	MOVQ	fd+0(FP), DI
+	MOVQ	len+8(FP), SI
+	MOVL	$SYS_ftruncate, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+16(FP)
+	RET
+
+TEXT runtime·fstat(SB),NOSPLIT,$0-20
+	MOVQ	fd+0(FP), DI
+	MOVQ	stat+8(FP), SI
+	MOVL	$SYS_fstat, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+16(FP)
+	RET
+
+TEXT runtime·unlinkat(SB),NOSPLIT,$0-28
+	MOVQ	fd+0(FP), DI
+	MOVQ	path+8(FP), SI
+	MOVQ	flags+16(FP), DX
+	MOVL	$SYS_unlinkat, AX
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$-1, AX
+	MOVL	AX, ret+24(FP)
+	RET
+
+TEXT runtime·readlink(SB),NOSPLIT,$0-28
+	MOVQ	path+0(FP), DI
+	MOVQ	buf+8(FP), SI
+	MOVQ	len+16(FP), DX
+	MOVL	$SYS_readlink, AX
 	SYSCALL
 	CMPQ	AX, $0xfffffffffffff001
 	JLS	2(PC)
@@ -456,7 +520,7 @@ TEXT runtime·sysMmap(SB),NOSPLIT,$0
 	MOVL	prot+16(FP), DX
 	MOVL	flags+20(FP), R10
 	MOVL	fd+24(FP), R8
-	MOVL	off+28(FP), R9
+	MOVQ	off+32(FP), R9
 
 	MOVL	$SYS_mmap, AX
 	SYSCALL
@@ -464,12 +528,12 @@ TEXT runtime·sysMmap(SB),NOSPLIT,$0
 	JLS	ok
 	NOTQ	AX
 	INCQ	AX
-	MOVQ	$0, p+32(FP)
-	MOVQ	AX, err+40(FP)
+	MOVQ	$0, p+40(FP)
+	MOVQ	AX, err+48(FP)
 	RET
 ok:
-	MOVQ	AX, p+32(FP)
-	MOVQ	$0, err+40(FP)
+	MOVQ	AX, p+40(FP)
+	MOVQ	$0, err+48(FP)
 	RET
 
 // Call the function stored in _cgo_mmap using the GCC calling convention.
@@ -480,14 +544,14 @@ TEXT runtime·callCgoMmap(SB),NOSPLIT,$16
 	MOVL	prot+16(FP), DX
 	MOVL	flags+20(FP), CX
 	MOVL	fd+24(FP), R8
-	MOVL	off+28(FP), R9
+	MOVQ	off+32(FP), R9
 	MOVQ	_cgo_mmap(SB), AX
 	MOVQ	SP, BX
 	ANDQ	$~15, SP	// alignment as per amd64 psABI
 	MOVQ	BX, 0(SP)
 	CALL	AX
 	MOVQ	0(SP), SP
-	MOVQ	AX, ret+32(FP)
+	MOVQ	AX, ret+40(FP)
 	RET
 
 TEXT runtime·sysMunmap(SB),NOSPLIT,$0

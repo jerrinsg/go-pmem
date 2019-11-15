@@ -114,6 +114,9 @@ import (
 const (
 	debugMalloc = false
 
+	isNotPersistent = 0
+	isPersistent    = 1
+
 	maxTinySize   = _TinySize
 	tinySizeClass = _TinySizeClass
 	maxSmallSize  = _MaxSmallSize
@@ -516,14 +519,18 @@ func mallocinit() {
 // There is no corresponding free function.
 //
 // h must be locked.
-func (h *mheap) sysAlloc(n uintptr) (v unsafe.Pointer, size uintptr) {
+// The memtype parameter indicates if the memory should be allocated from
+// persistent memory or volatile memory.
+func (h *mheap) sysAlloc(n uintptr, memtype int) (v unsafe.Pointer, size uintptr) {
 	n = round(n, heapArenaBytes)
 
 	// First, try the arena pre-reservation.
-	v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys)
-	if v != nil {
-		size = n
-		goto mapped
+	if memtype == isNotPersistent { // only applicable for volatile memory
+		v = h.arena.alloc(n, heapArenaBytes, &memstats.heap_sys)
+		if v != nil {
+			size = n
+			goto mapped
+		}
 	}
 
 	// Try to grow the heap at a hint address.
@@ -614,7 +621,7 @@ func (h *mheap) sysAlloc(n uintptr) (v unsafe.Pointer, size uintptr) {
 	}
 
 	// Back the reservation.
-	sysMap(v, size, &memstats.heap_sys)
+	sysMap(v, size, &memstats.heap_sys, memtype)
 
 mapped:
 	// Create arena metadata.
@@ -1227,7 +1234,7 @@ func (l *linearAlloc) alloc(size, align uintptr, sysStat *uint64) unsafe.Pointer
 	l.next = p + size
 	if pEnd := round(l.next-1, physPageSize); pEnd > l.mapped {
 		// We need to map more of the reserved space.
-		sysMap(unsafe.Pointer(l.mapped), pEnd-l.mapped, sysStat)
+		sysMap(unsafe.Pointer(l.mapped), pEnd-l.mapped, sysStat, isNotPersistent)
 		l.mapped = pEnd
 	}
 	return unsafe.Pointer(p)

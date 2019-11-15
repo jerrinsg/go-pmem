@@ -20,7 +20,7 @@ var _cgo_mmap unsafe.Pointer
 //go:linkname _cgo_munmap _cgo_munmap
 var _cgo_munmap unsafe.Pointer
 
-func mmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) (unsafe.Pointer, int) {
+func mmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uintptr) (unsafe.Pointer, int) {
 	if _cgo_mmap != nil {
 		// Make ret a uintptr so that writing to it in the
 		// function literal does not trigger a write barrier.
@@ -48,11 +48,11 @@ func munmap(addr unsafe.Pointer, n uintptr) {
 }
 
 // sysMmap calls the mmap system call. It is implemented in assembly.
-func sysMmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) (p unsafe.Pointer, err int)
+func sysMmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uintptr) (p unsafe.Pointer, err int)
 
 // callCgoMmap calls the mmap function in the runtime/cgo package
 // using the GCC calling convention. It is implemented in assembly.
-func callCgoMmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uint32) uintptr
+func callCgoMmap(addr unsafe.Pointer, n uintptr, prot, flags, fd int32, off uintptr) uintptr
 
 // sysMunmap calls the munmap system call. It is implemented in assembly.
 func sysMunmap(addr unsafe.Pointer, n uintptr)

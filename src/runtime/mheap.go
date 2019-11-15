@@ -15,6 +15,8 @@ import (
 	"unsafe"
 )
 
+const pmemFileName = "/mnt/ext4-pmem0/pmemFile"
+
 // minPhysPageSize is a lower-bound on the physical page size. The
 // true physical page size may be larger than this. In contrast,
 // sys.PhysPageSize is an upper-bound on the physical page size.
@@ -152,6 +154,10 @@ type mheap struct {
 	specialprofilealloc   fixalloc // allocator for specialprofile*
 	speciallock           mutex    // lock for special record allocators.
 	arenaHintAlloc        fixalloc // allocator for arenaHints
+
+	// nextPmemOff stores the offset in the persistent memory file at which
+	// it should be mapped into memory next.
+	nextPmemOff uintptr
 
 	unused *specialfinalizer // never set, just here to force the specialfinalizer type into DWARF
 }
@@ -903,7 +909,7 @@ HaveSpan:
 		// If s was scavenged, then t may be scavenged.
 		start, end := t.physPageBounds()
 		if s.scavenged && start < end {
-			memstats.heap_released += uint64(end-start)
+			memstats.heap_released += uint64(end - start)
 			t.scavenged = true
 		}
 		s.state = mSpanManual // prevent coalescing with s
@@ -934,13 +940,23 @@ HaveSpan:
 	return s
 }
 
+var pmemEnabled bool
+
+func EnablePmem() {
+	pmemEnabled = true
+}
+
 // Try to add at least npage pages of memory to the heap,
 // returning whether it worked.
 //
 // h must be locked.
 func (h *mheap) grow(npage uintptr) bool {
 	ask := npage << _PageShift
-	v, size := h.sysAlloc(ask)
+	usePmem := 0
+	if pmemEnabled {
+		usePmem = 1
+	}
+	v, size := h.sysAlloc(ask, usePmem)
 	if v == nil {
 		print("runtime: out of memory: cannot allocate ", ask, "-byte block (", memstats.heap_sys, " in use)\n")
 		return false
@@ -953,6 +969,9 @@ func (h *mheap) grow(npage uintptr) bool {
 	// the number of pages released, so we make fewer of those calls
 	// with larger spans.
 	h.scavengeLargest(size)
+
+	// Increment the next map offset
+	h.nextPmemOff += size
 
 	// Create a fake "in use" span and free it, so that the
 	// right coalescing happens.
@@ -1145,7 +1164,7 @@ func (h *mheap) scavengeLargest(nbytes uintptr) {
 			//
 			// This check also preserves the invariant that spans that have
 			// `scavenged` set are only ever in the `scav` treap, and
-			// those which have it unset are only in the `free` treap. 
+			// those which have it unset are only in the `free` treap.
 			return
 		}
 		prev := t.pred()
@@ -1174,7 +1193,7 @@ func (h *mheap) scavengeAll(now, limit uint64) uintptr {
 	for t != nil {
 		s := t.spanKey
 		next := t.succ()
-		if (now-uint64(s.unusedsince)) > limit {
+		if (now - uint64(s.unusedsince)) > limit {
 			r := s.scavenge()
 			if r != 0 {
 				// If we ended up scavenging s, then remove it from unscav
