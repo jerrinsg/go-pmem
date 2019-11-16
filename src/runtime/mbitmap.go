@@ -969,7 +969,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 		}
 		if shouldLog {
 			h := heapBitsForAddr(x)
-			logHeapBits(x, h.bitp, h.bitp)
+			logHeapBits(x, h.bitp, h.bitp, typ)
 		}
 		return
 	}
@@ -1004,7 +1004,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 				*h.bitp |= (bitPointer | bitScan | bitPointer<<heapBitsShift) << h.shift
 			}
 			if shouldLog {
-				logHeapBits(x, startAddr, endAddr)
+				logHeapBits(x, startAddr, endAddr, typ)
 			}
 			return
 		}
@@ -1025,7 +1025,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 		*h.bitp &^= (bitPointer | bitScan | ((bitPointer | bitScan) << heapBitsShift)) << h.shift
 		*h.bitp |= uint8(hb << h.shift)
 		if shouldLog {
-			logHeapBits(x, startAddr, endAddr)
+			logHeapBits(x, startAddr, endAddr, typ)
 		}
 		return
 	}
@@ -1039,6 +1039,9 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 
 	outOfPlace := false
 	if arenaIndex(x+size-1) != arenaIdx(h.arena) || (doubleCheck && fastrand()%2 == 0) {
+		if pmemInfo.initState == initOngoing {
+			throw("out of place not supported for now")
+		}
 		// This object spans heap arenas, so the bitmap may be
 		// discontiguous. Unroll it into the object instead
 		// and then copy it out.
@@ -1386,7 +1389,7 @@ Phase3:
 	}
 
 	if shouldLog {
-		logHeapBits(x, startAddr, endAddr)
+		logHeapBits(x, startAddr, endAddr, typ)
 	}
 
 Phase4:

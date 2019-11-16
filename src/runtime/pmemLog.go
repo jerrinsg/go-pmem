@@ -27,7 +27,7 @@ const (
 // This type bitmap will be restored during subsequent run of the program
 // and will help GC identify which addresses in the reconstructed persistent memory
 // region has pointers.
-func logHeapBits(addr uintptr, startByte, endByte *byte) {
+func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 	span := spanOfUnchecked(addr)
 	if span.memtype != isPersistent {
 		throw("Invalid heap type bits logging request")
@@ -39,7 +39,8 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 	pArena := (*pArena)(unsafe.Pointer(span.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
 
-	if shouldPrint {
+	if false {
+		println("typ size = ", typ.size, " ptrdata = ", typ.ptrdata)
 		hbT := heapBitsForAddr(addr)
 		println("logHeapBits - numHeapBytes = ", numHeapBytes)
 		println("startByte = ", unsafe.Pointer(startByte), " heapBitsForAddr = ", unsafe.Pointer(hbT.bitp))
@@ -60,9 +61,30 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 		if *typAddr != span.typIndex {
 			*typAddr = span.typIndex
 		}
-		logAddr := unsafe.Pointer(uintptr(unsafe.Pointer(typAddr)) + intSize)
-		memmove(logAddr, unsafe.Pointer(startByte), numHeapBytes)
-		PersistRange(unsafe.Pointer(typAddr), numHeapBytes+intSize)
+
+		// DEBUG - CAN BE REMOVED
+		if typ.ptrdata%8 != 0 {
+			println("TYP ", typ.string(), " ptrdata size NOT A MULTIPLE OF 8")
+		}
+
+		tAU := uintptr(unsafe.Pointer(typAddr))
+		// COPY typ kind
+		kindAddr := (*uint8)(unsafe.Pointer(tAU + intSize))
+		*kindAddr = typ.kind
+
+		sizeAddr := (*uintptr)(unsafe.Pointer(tAU + 16))
+		*sizeAddr = typ.size
+
+		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
+		*ptrAddr = typ.ptrdata
+
+		numHeapTypeBytes := (typ.ptrdata + 7) / 8
+		gcDataAddr := unsafe.Pointer(tAU + 32)
+		memmove(gcDataAddr, unsafe.Pointer(typ.gcdata), numHeapTypeBytes)
+
+		// println("Logging: kind = ", typ.kind, " size = ", typ.size, "ptrdata = ", typ.ptrdata)
+
+		PersistRange(unsafe.Pointer(typAddr), numHeapTypeBytes+32)
 	} else {
 		logAddr := pmemHeapBitsAddr(addr, pArena)
 		// From heapBitsSetType()

@@ -39,6 +39,8 @@ const (
 	maxMemTypes = 2
 
 	// The number of types that we want to cache separately in the mcache
+	// (including slices which is always cached at index 1). If a type is not
+	// specially cached, it occupies slot 0.
 	maxTypes = 6
 
 	// The maximum span class of a small span
@@ -85,9 +87,10 @@ type pHeader struct {
 	// allocation. typeMap is used to persistently store the relationship
 	// between a cached type and its index within the cache.
 	// typeMap[i] stores the pointer to the type (in RODATA section) cached at
-	// index i. In mcache, index 1 is always used to allocate slices, so we need
-	// to persist the mapping only for maxTypes - 1 number of entries.
-	typeMap [maxTypes - 1]uintptr
+	// index i. In mcache, index 1 is always used to allocate slices, and index
+	// 0 is used for types which are not cached, so we need to persist the
+	// mapping only for maxTypes - 2 number of entries. 
+	typeMap [maxTypes - 2]uintptr
 }
 
 // Strucutre of a persistent memory arena header
@@ -206,6 +209,19 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 
 		// Disable garbage collection during persistent memory initialization
 		gcp = int(setGCPercent(-1))
+
+		// Restore the type information
+		for i:= 0 ; i < maxTypes-2; i++ {
+			if pmemHeader.typeMap[i] == 0 {
+				break
+			}
+			typ := (*_type)(unsafe.Pointer(pmemHeader.typeMap[i]))
+			tu := uintptr(unsafe.Pointer(typ))
+			typOffset := (tu - typeBase) / 64
+			typProf[typOffset] = 100
+			typAssigns[typOffset] = i+2
+			println("Restoring typ ", typ.string(), " at index ", i+2)
+		}
 
 		// Map all arenas found in the persistent memory file to memory. This
 		// function creates spans for the in-use regions of memory in the
@@ -371,8 +387,7 @@ func (ar *arenaInfo) reconstruct() {
 			unlock(&h.lock)
 			i += npages
 		} else {
-			s := createSpan(sval, addr)
-			s.pArena = (uintptr)(unsafe.Pointer(pa))
+			s := pa.createSpan(sval, addr)
 			// The heap type bits need to be restored only if the span is known
 			// to have pointers in it.
 			if !s.spanclass.noscan() {
@@ -386,7 +401,7 @@ func (ar *arenaInfo) reconstruct() {
 // createSpan figures out the properties of the span to be reconstructed such as
 // spanclass, number of pages, the needzero value, etc. and calls the core
 // reconstruction function createSpanCore.
-func createSpan(sVal uint32, baseAddr uintptr) *mspan {
+func (pa *pArena) createSpan(sVal uint32, baseAddr uintptr) *mspan {
 	var npages uintptr
 	var spc spanClass
 	large := false
@@ -400,10 +415,15 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 		npages = uintptr(class_to_allocnpages[sVal>>3])
 		spc = spanClass(sVal >> 2)
 	}
-	s := createSpanCore(spc, baseAddr, npages, large, needzero)
-	// If the span uses optimized heap type bit logging, set typIndex as 1. This
-	// will be set as the proper type index in restoreSpanHeapBits().
-	s.typIndex = bool2int(sVal>>1&1 != 0)
+	typIndex := 0
+	if sVal>>1&1 != 0 {
+		// Span uses optimized heap type bit logging. Find out the type index
+		typAddr := pmemHeapBitsAddr(baseAddr, pa)
+		typIndex = *(*int)(typAddr)	
+	}
+
+	s := createSpanCore(spc, baseAddr, npages, large, needzero, typIndex)
+	s.pArena = (uintptr)(unsafe.Pointer(pa))
 
 	return s
 }
@@ -413,7 +433,7 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 // metadata for the span, adds the span in the appropriate memory allocator list
 // and also adds it in the sweepSpans datastructure so that this span would be
 // swept in the next complete GC cycle.
-func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *mspan {
+func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool, typIndex int) *mspan {
 	h := &mheap_
 
 	s := (*mspan)(h.spanalloc.alloc())
@@ -464,6 +484,8 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 	s.allocBits = newAllocBits(s.nelems)
 	s.gcmarkBits = newMarkBits(s.nelems)
 
+	s.typIndex = typIndex
+
 	h.setSpans(s.base(), s.npages, s)
 
 	// Put span s in the appropriate memory allocator list
@@ -475,7 +497,7 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 		// list in mcentral. Since the span is empty, it will not be cached in
 		// mcache.
 		// TODO fix the mcentral index
-		c := &mheap_.central[isPersistent][spc][0].mcentral
+		c := &mheap_.central[isPersistent][spc][typIndex].mcentral
 		lock(&c.lock)
 		c.empty.insertBack(s)
 		unlock(&c.lock)
@@ -573,6 +595,9 @@ func enableGC(gcp int) {
 	go GC()
 }
 
+var gTyp _type
+var byteArray [100]byte
+
 // Restores the heap type bit information for the reconstructed span 's'.
 // The heap type bits is needed for the GC to identify what regions in the
 // reconstructed span have pointers in them.
@@ -582,27 +607,35 @@ func enableGC(gcp int) {
 // may be contained in one or more volatile arenas. Therefore, this function
 // copies the heap type bits in a per volatile-memory arena manner.
 func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
-	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
-	// total heap type bytes to be copied
-	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
-
 	parena := (*pArena)(unsafe.Pointer(s.pArena))
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
 
-	//var t _type
-
-	var srcAddr unsafe.Pointer
-
 	if s.typIndex != 0 {
-		typAddr := pmemHeapBitsAddr(spanAddr, parena)
-		s.typIndex = *(*int)(typAddr)
-		println("Read back typIndex as ", s.typIndex)
-		srcAddr = unsafe.Pointer(uintptr(typAddr) + intSize)
+		tAU := uintptr(pmemHeapBitsAddr(spanAddr, parena))
+		// COPY typ kind
+		kindAddr := (*uint8)(unsafe.Pointer(tAU + intSize))
+		gTyp.kind = *kindAddr
+
+		sizeAddr := (*uintptr)(unsafe.Pointer(tAU + 16))
+		gTyp.size = *sizeAddr
+
+		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
+		gTyp.ptrdata = *ptrAddr
+
+		gcDataAddr := unsafe.Pointer(tAU + 32)
+		gTyp.gcdata = (*byte)(gcDataAddr)
+
+		//println("Read back typIndex as ", s.typIndex, " kind = ", gTyp.kind, " size = ", gTyp.size,  "ptrdata = ", gTyp.ptrdata)
+
+		totSize := s.elemsize * s.nelems
+		heapBitsSetType(spanAddr, totSize, totSize, &gTyp, false)
+		return
 	}
 
-	//	optLogging := s.typIndex != 0
-
+	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
+	// total heap type bytes to be copied
+	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
 	for copied := uintptr(0); copied < totalBytes; {
 		// each iteration copies heap type bits corresponding to the heap region
 		// between 'spanAddr' and 'endAddr'
@@ -617,17 +650,9 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 		}
 
 		numSpanBytes := (endAddr - spanAddr)
-		if s.typIndex != 0 {
-			srcAddr = pmemHeapBitsAddr(spanAddr, parena)
-		}
+		srcAddr := pmemHeapBitsAddr(spanAddr, parena)
 		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
-
-		// the memcpy logic here is wrong..
-		if s.typIndex != 0 {
-
-		} else {
-			memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
-		}
+		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
 
 		copied += (numSpanBytes / bytesPerBitmapByte)
 		spanAddr += numSpanBytes
@@ -983,8 +1008,8 @@ retry:
 		if atomic.Cas64(&numAssigned, nA, nA+1) == false {
 			goto retryAssign
 		}
-		// println("TYPE ", typ.string(), " assigned slot ", nA+1)
 
+		println("storing typ ", typ.string(), " at index ", nA+1)
 		typAssigns[typOffset] = int(nA + 1)
 
 		// store the mapping persistently
