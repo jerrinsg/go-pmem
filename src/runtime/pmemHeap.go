@@ -89,7 +89,7 @@ type pHeader struct {
 	// typeMap[i] stores the pointer to the type (in RODATA section) cached at
 	// index i. In mcache, index 1 is always used to allocate slices, and index
 	// 0 is used for types which are not cached, so we need to persist the
-	// mapping only for maxTypes - 2 number of entries. 
+	// mapping only for maxTypes - 2 number of entries.
 	typeMap [maxTypes - 2]uintptr
 }
 
@@ -211,16 +211,17 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 		gcp = int(setGCPercent(-1))
 
 		// Restore the type information
-		for i:= 0 ; i < maxTypes-2; i++ {
+		for i := 0; i < maxTypes-2; i++ {
 			if pmemHeader.typeMap[i] == 0 {
 				break
 			}
 			typ := (*_type)(unsafe.Pointer(pmemHeader.typeMap[i]))
 			tu := uintptr(unsafe.Pointer(typ))
 			typOffset := (tu - typeBase) / 64
-			typProf[typOffset] = 100
-			typAssigns[typOffset] = i+2
-			println("Restoring typ ", typ.string(), " at index ", i+2)
+			typProf[typOffset] = 1024 // THIS THRESHOLD VALUE SHOULD BE CHANGED
+			typAssigns[typOffset] = i + 2
+			numAssigned++
+			println("Restoring typ ", typ.string(), " at index ", i+2, " numAssigned = ", numAssigned)
 		}
 
 		// Map all arenas found in the persistent memory file to memory. This
@@ -302,6 +303,7 @@ func mapArenas() error {
 				return errorString("Arena mapping failed")
 			}
 		}
+		println("Mapped arena originally at ", arenaMapAddr, " at ", mapAddr)
 
 		// Create the volatile memory arena datastructures for the newly mapped
 		// heap regions. Each volatile arena datastructure contains the runtime
@@ -317,6 +319,7 @@ func mapArenas() error {
 		ar := &arenaInfo{parena, uintptr(mapAddr)}
 		// Reconstruct the spans in this arena
 		ar.reconstruct()
+		// RECONSTRUCT CAN BE CALLED LIKE OUTSIDE THE LOOP IN A PARALLEL WAY..
 		arenas = append(arenas, ar)
 	}
 
@@ -391,7 +394,7 @@ func (ar *arenaInfo) reconstruct() {
 			// The heap type bits need to be restored only if the span is known
 			// to have pointers in it.
 			if !s.spanclass.noscan() {
-				ar.restoreSpanHeapBits(s)
+				ar.restoreSpanHeapBits(s) // POTENTIALLY PARALLEL
 			}
 			i += s.npages
 		}
@@ -419,7 +422,7 @@ func (pa *pArena) createSpan(sVal uint32, baseAddr uintptr) *mspan {
 	if sVal>>1&1 != 0 {
 		// Span uses optimized heap type bit logging. Find out the type index
 		typAddr := pmemHeapBitsAddr(baseAddr, pa)
-		typIndex = *(*int)(typAddr)	
+		typIndex = *(*int)(typAddr)
 	}
 
 	s := createSpanCore(spc, baseAddr, npages, large, needzero, typIndex)
@@ -595,9 +598,6 @@ func enableGC(gcp int) {
 	go GC()
 }
 
-var gTyp _type
-var byteArray [100]byte
-
 // Restores the heap type bit information for the reconstructed span 's'.
 // The heap type bits is needed for the GC to identify what regions in the
 // reconstructed span have pointers in them.
@@ -611,14 +611,20 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
 
+	// DISTINGUISH BETWEEN TWO CASES -- PMAKE ALLOCATIONS AND PNEW ALLOCATIONS
+	// MAYBE COULD BE DISTINGUISHED USING DATASIZE AND SIZE PARAMETERS
+	// IT COULD ALSO BE JUST LOGGED SOMEWHERE IN THE SPAN
+
 	if s.typIndex != 0 {
 		tAU := uintptr(pmemHeapBitsAddr(spanAddr, parena))
+		var gTyp _type // CHECK IF THIS CAUSES MALLOC WHICH MAY CAUSE ISSUES
 		// COPY typ kind
 		kindAddr := (*uint8)(unsafe.Pointer(tAU + intSize))
 		gTyp.kind = *kindAddr
-
+		//println("")
 		sizeAddr := (*uintptr)(unsafe.Pointer(tAU + 16))
 		gTyp.size = *sizeAddr
+		gTyp.size = s.elemsize
 
 		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
 		gTyp.ptrdata = *ptrAddr
@@ -626,10 +632,27 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 		gcDataAddr := unsafe.Pointer(tAU + 32)
 		gTyp.gcdata = (*byte)(gcDataAddr)
 
-		//println("Read back typIndex as ", s.typIndex, " kind = ", gTyp.kind, " size = ", gTyp.size,  "ptrdata = ", gTyp.ptrdata)
+		numHeapTypeBits := (gTyp.ptrdata + 7) / 8
+		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
 
-		totSize := s.elemsize * s.nelems
-		heapBitsSetType(spanAddr, totSize, totSize, &gTyp, false)
+		//print("Read back typIndex as ", s.typIndex, " kind = ", gTyp.kind, " size = ", gTyp.size, "ptrdata = ", gTyp.ptrdata, " heap bits -- ")
+		var ptrByteAddr *byte
+		ptrByteAddr = gTyp.gcdata
+		for i := uintptr(0); i < numHeapTypeBytes; i++ {
+			//print(*ptrByteAddr, " ")
+			ptrByteAddr = addb(ptrByteAddr, 1)
+		}
+		//println("")
+
+		// totSize := s.elemsize * s.nelems
+		// heapBitsSetType(spanAddr, totSize, totSize, &gTyp, false)
+
+		startAddr := s.base()
+		for k := uintptr(0); k < s.nelems; k++ {
+			heapBitsSetType(startAddr, s.elemsize, gTyp.size, &gTyp, false)
+			startAddr += s.elemsize
+		}
+
 		return
 	}
 
@@ -894,6 +917,9 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 				pa.logEntry(unsafe.Pointer(addr))
 
 				pa.bytesSwizzled = (addr - start + 8)
+				if newAddr == 0 && *au != 0 {
+					// println("Zeroing data at address ", unsafe.Pointer(au), " which had data ", *au)
+				}
 				*au = newAddr
 
 				// Commit persists the changes and then resets the log
@@ -925,6 +951,7 @@ func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr 
 
 var typAssigns [50000]int
 var typProf [50000]uint64
+var lastAlloc [50000]int64
 var numAssigned uint64
 var typeBase uintptr
 
@@ -935,45 +962,44 @@ func init() {
 	// reflect function itself.. or wherever it is first computed
 }
 
-
 var numTypes int64
 var typHashes [50]uint32
 
 // map between type and a constant
-func typeIndex(typ *_type) int {
-/*
- *    found := false
- *    for i := 0; i < int(numTypes); i++ {
- *        if typHashes[i] == typ.hash {
- *            found = true
- *            break
- *        }
- *    }
- *
- *    if !found {
- *        atomic.Xaddint64(&numTypes, 1)
- *        typHashes[int(numTypes)-1] = typ.hash
- *        println("Typ = ", typ.string(), " hash = ", typ.hash)
- *    }
- *
- */
+func typeIndex(typ *_type, sizeclass uint8) int {
+	/*
+	 *    found := false
+	 *    for i := 0; i < int(numTypes); i++ {
+	 *        if typHashes[i] == typ.hash {
+	 *            found = true
+	 *            break
+	 *        }
+	 *    }
+	 *
+	 *    if !found {
+	 *        atomic.Xaddint64(&numTypes, 1)
+	 *        typHashes[int(numTypes)-1] = typ.hash
+	 *        println("Typ = ", typ.string(), " hash = ", typ.hash)
+	 *    }
+	 *
+	 */
 	//switch typ.hash {
 	//case 1958318709: // redis.entry (1) 9672059
-		//return 1
+	//return 1
 	//case 1231536609, 942571231: // []pmem.namedObject, []uint8 (2) 2000001
-		//return 2
+	//return 2
 	//case 2912989429: // redis.eI2 187405
-		//return 3
+	//return 3
 	//case 4129549170: // transaction.entry (3) 1024
-		//return 4
+	//return 4
 	//case 1411583090: // transaction.undoTx (4) 512
-		//return 5
+	//return 5
 	//case 1978800597: // transaction.redoTx (5) 512
-		//return 0
+	//return 0
 	//case 565663992: // go1.binaryNode
-		//return 1
+	//return 1
 	//default:
-		//return 0
+	//return 0
 	//}
 
 	// Slices are always cached at index 1
@@ -981,6 +1007,7 @@ func typeIndex(typ *_type) int {
 		return 1
 	}
 
+	threshAllocs := uint64(class_to_objects[sizeclass])
 	tu := uintptr(unsafe.Pointer(typ))
 	typOffset := (tu - typeBase) / 64
 
@@ -989,22 +1016,36 @@ func typeIndex(typ *_type) int {
 		throw("Index overflow")
 	}
 
-	// Coming from the restart path -> set the count as 100 during re-init
+	// Coming from the restart path -> set the count as threshAllocs during re-init
 retry:
-	curVal := typProf[typOffset]
-	if curVal == 100 {
+	curVal := atomic.Load64(&typProf[typOffset]) // CHANGE THIS TO AN ATOMIC READ
+	if curVal > threshAllocs {
 		// some threads might still get the value as 0, it is ok
 		return typAssigns[typOffset]
 	}
+
 	if atomic.Cas64(&typProf[typOffset], curVal, curVal+1) == false {
 		goto retry
 	}
-	if curVal+1 == 100 {
+
+	if curVal+1 == threshAllocs-1 {
+		lastAlloc[typOffset] = nanotime()
+	} else if curVal+1 == threshAllocs {
 	retryAssign:
-		nA := numAssigned
+		nA := atomic.Load64(&numAssigned)
 		if nA == 5 { // used all cached entries
 			return 0
 		}
+
+		curTime := nanotime()
+		freq := (curTime - lastAlloc[typOffset])
+
+		if freq > 1000000000 {
+			// if the frequency of allocation is less than 1 per second, then
+			// do not cache it
+			return 0
+		}
+
 		if atomic.Cas64(&numAssigned, nA, nA+1) == false {
 			goto retryAssign
 		}
@@ -1020,4 +1061,33 @@ retry:
 	}
 
 	return 0
+}
+
+func PrintSpan(addr unsafe.Pointer) {
+	s := spanOf(uintptr(addr))
+	endAddr := s.base() + (s.nelems * s.elemsize)
+
+	for addr := s.base(); addr < endAddr; addr += 32 {
+		hbits := heapBitsForAddr(addr)
+		byt := (*byte)(unsafe.Pointer(hbits.bitp))
+		print(" ", *byt)
+	}
+
+	println(" ")
+}
+
+// end is 1 past the actual end
+func PrintHeapBits(start, end uintptr) {
+	numAllocBytes := (end - start)
+	numHeapBits := (numAllocBytes + 3) / 4
+	numHeapBytes := (numHeapBits + 7) / 8
+
+	addr := start
+	for i := uintptr(0); i < numHeapBytes; i++ {
+		hbits := heapBitsForAddr(addr)
+		byt := (*byte)(unsafe.Pointer(hbits.bitp))
+		println(i, " : ", (*byt&(1<<7))>>7, " ", (*byt&(1<<6))>>6, " ", (*byt&(1<<5))>>5, " ",
+			(*byt&(1<<4))>>4, " ", (*byt&(1<<3))>>3, " ", (*byt&(1<<2))>>2, " ", (*byt&(1<<1))>>1, " ",
+			(*byt & 1), " ")
+	}
 }

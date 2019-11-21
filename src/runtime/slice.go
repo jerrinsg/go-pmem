@@ -48,6 +48,10 @@ func makeslice(et *_type, len, cap int, memtype int) unsafe.Pointer {
 		panicmakeslicecap()
 	}
 
+	if false {
+		println("Makeslice - len = ", len, " cap = ", cap, " mem = ", mem)
+	}
+
 	return mallocgc(mem, et, needZeroed, memtype)
 }
 

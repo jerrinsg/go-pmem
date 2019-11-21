@@ -77,12 +77,24 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 
 		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
 		*ptrAddr = typ.ptrdata
+		//println("TYPE SIZE = ", typ.size, " SPAN SIZE = ", span.elemsize)
 
-		numHeapTypeBytes := (typ.ptrdata + 7) / 8
+		numHeapTypeBits := (typ.ptrdata + 7) / 8
+		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
+
 		gcDataAddr := unsafe.Pointer(tAU + 32)
+		memclrNoHeapPointers(gcDataAddr, 16)
 		memmove(gcDataAddr, unsafe.Pointer(typ.gcdata), numHeapTypeBytes)
 
-		// println("Logging: kind = ", typ.kind, " size = ", typ.size, "ptrdata = ", typ.ptrdata)
+		// print("typIndex = ", *typAddr, " Logging: kind = ", typ.kind, " size = ", typ.size, "ptrdata = ", typ.ptrdata, " heap bits -- ")
+
+		var ptrByteAddr *byte
+		ptrByteAddr = (*byte)(gcDataAddr)
+		for i := uintptr(0); i < numHeapTypeBytes; i++ {
+			// print(*ptrByteAddr, " ")
+			ptrByteAddr = addb(ptrByteAddr, 1)
+		}
+		//println("")
 
 		PersistRange(unsafe.Pointer(typAddr), numHeapTypeBytes+32)
 	} else {

@@ -944,6 +944,8 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 	// be logged in persistent memory.
 	var startAddr, endAddr *byte
 	const doubleCheck = false // slow but helpful; enable to test modifications to this code
+	var bitsArray [64]byte
+	heapTmpArray := x
 
 	// dataSize is always size rounded up to the next malloc size class,
 	// except in the case of allocating a defer block, in which case
@@ -1039,8 +1041,12 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 
 	outOfPlace := false
 	if arenaIndex(x+size-1) != arenaIdx(h.arena) || (doubleCheck && fastrand()%2 == 0) {
-		if pmemInfo.initState == initOngoing {
-			throw("out of place not supported for now")
+		if shouldLog {
+			heapTmpArray = uintptr(unsafe.Pointer(&bitsArray[0]))
+			if (size+31)/32 > 64 {
+				println("size = ", size, " data size = ", dataSize)
+				throw("currently supporting only 64 bytes..")
+			}
 		}
 		// This object spans heap arenas, so the bitmap may be
 		// discontiguous. Unroll it into the object instead
@@ -1049,7 +1055,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 		// In doubleCheck mode, we randomly do this anyway to
 		// stress test the bitmap copying path.
 		outOfPlace = true
-		h.bitp = (*uint8)(unsafe.Pointer(x))
+		h.bitp = (*uint8)(unsafe.Pointer(heapTmpArray))
 		h.last = nil
 		startAddr = h.bitp
 		endAddr = h.bitp
@@ -1401,7 +1407,7 @@ Phase4:
 		// cnw is the number of heap words, or bit pairs
 		// remaining (like nw above).
 		cnw := size / sys.PtrSize
-		src := (*uint8)(unsafe.Pointer(x))
+		src := (*uint8)(unsafe.Pointer(heapTmpArray))
 		// We know the first and last byte of the bitmap are
 		// not the same, but it's still possible for small
 		// objects span arenas, so it may share bitmap bytes
@@ -1458,7 +1464,7 @@ Phase4:
 			hbitp = h.bitp
 		}
 		// Zero the object where we wrote the bitmap.
-		memclrNoHeapPointers(unsafe.Pointer(x), uintptr(unsafe.Pointer(src))-x)
+		memclrNoHeapPointers(unsafe.Pointer(heapTmpArray), uintptr(unsafe.Pointer(src))-heapTmpArray)
 	}
 
 	// Double check the whole bitmap.

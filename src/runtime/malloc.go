@@ -821,6 +821,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		throw("mallocgc called with gcphase == _GCmarktermination")
 	}
 
+	if memtype == isPersistent {
+	//	println("allocation request for size ", size, " of type ", typ.string(), " hash = ", typ.hash, " typ.size = ", typ.size)
+	}
+
 	if size == 0 {
 		if memtype == isPersistent {
 			// For a 0-byte allocation, volatile allocator always returns the
@@ -884,9 +888,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
 
 	typInd := 0
-	if memtype == isPersistent && noscan == false {
-		typInd = typeIndex(typ)
-	}
 
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
@@ -963,7 +964,15 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			} else {
 				sizeclass = size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]
 			}
+			sb := size
 			size = uintptr(class_to_size[sizeclass])
+			if shouldPrint {
+				println("Rounding size from ", sb, " to ", size)
+			}
+			// ARRAYS NOT SUPPORTED FOR NOW BUT CAN BE EASILY EXTENDED
+			if memtype == isPersistent && noscan == false && typ.size == dataSize {
+				typInd = typeIndex(typ, sizeclass)
+			}
 			spc := makeSpanClass(sizeclass, noscan)
 			span = c.alloc[memtype][spc][typInd]
 			v := nextFreeFast(span)
@@ -994,8 +1003,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		throw("Got invalid span type")
 	}
 
+	span.typIndex = typInd
 	if newSpan && memtype == isPersistent {
-		span.typIndex = typInd
+
 		logSpanAlloc(span)
 	}
 
@@ -1010,7 +1020,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		if typ == deferType {
 			dataSize = unsafe.Sizeof(_defer{})
 		}
-
+		if false {
+			println("Calling heap set type x = ", x, " size = ", size, " dataSize = ", dataSize, " typ.size = ", typ.size,
+				" typ.ptrdata = ", typ.ptrdata)
+		}
 		heapBitsSetType(uintptr(x), size, dataSize, typ, (newSpan || typInd == 0) && memtype == isPersistent)
 		if dataSize > typ.size {
 			// Array allocation. If there are any
@@ -1123,6 +1136,7 @@ func newobject(typ *_type) unsafe.Pointer {
 // 'persistent' argument. This due to some optimizations/checks that the go compiler
 // does. See cmd/compile/internal/ssa/gen/generic.rules
 func pnewobject(typ *_type) unsafe.Pointer {
+	//println("typ.size = ", typ.size)
 	return mallocgc(typ.size, typ, needZeroed, isPersistent)
 }
 
