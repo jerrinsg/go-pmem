@@ -239,6 +239,10 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 		dowidth(txLog.Type)
 		ssa.TxLogFnOffset = txLog.Xoffset
 		ssa.TxLogFnStkSize = txLog.Type.ArgWidth()
+		txLog2 := typecheck(txLog2Fn.Left, Ecall) // txLog2 = txn.Log2, not the function call
+		dowidth(txLog2.Type)
+		ssa.TxLog2FnOffset = txLog2.Xoffset
+		ssa.TxLog2FnStkSize = txLog2.Type.ArgWidth()
 	}
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
@@ -6596,6 +6600,8 @@ func (e *ssafn) Syslook(name string) *obj.LSym {
 		return sysfunc("inpmem")
 	case "newobject":
 		return sysfunc("newobject")
+	case "pnewobject":
+		return sysfunc("pnewobject")
 	}
 	Fatalf("unknown Syslook func %v", name)
 	return nil

@@ -134,6 +134,7 @@ var txType *types.Type // used to read type of tx variable (transaction.TX)
 var txBeginFn *Node    // used to read offset of Begin() method in tx interface
 var txEndFn *Node      // used to read offset of End() method in tx interface
 var txLogFn *Node      // used to read offset of Log() method in tx interface
+var txLog2Fn *Node      // used to read offset of Log() method in tx interface
 var txReadLogFn *Node  // used to read offset of ReadLog() method in tx interface
 var txLockFn *Node     // used to read offset of Lock() method in tx interface
 var txRLockFn *Node    // used to read offset of RLock() method in tx interface

@@ -1118,6 +1118,9 @@ func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
 	if txLogFn == nil {
 		txLogFn = p.getNewNodeFromString("tx.Log(a)")
 	}
+	if txLog2Fn == nil {
+		txLog2Fn = p.getNewNodeFromString("tx.Log2(a)")
+	}
 	if txReadLogFn == nil {
 		txReadLogFn = p.getNewNodeFromString("tx.ReadLog(a)")
 	}
