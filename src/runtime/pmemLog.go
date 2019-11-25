@@ -54,6 +54,9 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 		}
 	}
 
+	// RATHER THAN LOG ONCE SHOULD WE AT THIS POINT LOG THE BITS FOR ALL POTENTIAL
+	// OBJECTS SO THAT RECOVERY WOULD JUST BE A MEMCPY
+
 	if optLog {
 		typAddr := (*int)(pmemHeapBitsAddr(span.base(), pArena))
 		// Write the type index (8 bytes) at the beginning of the log followed

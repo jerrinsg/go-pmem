@@ -215,12 +215,10 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 			if pmemHeader.typeMap[i] == 0 {
 				break
 			}
-			typ := (*_type)(unsafe.Pointer(pmemHeader.typeMap[i]))
-			tu := uintptr(unsafe.Pointer(typ))
-			typOffset := (tu - typeBase) / 64
-			typProf[typOffset] = 1024 // THIS THRESHOLD VALUE SHOULD BE CHANGED
+			typOffset := pmemHeader.typeMap[i]
 			typAssigns[typOffset] = i + 2
 			numAssigned++
+			typ := (*_type)(unsafe.Pointer(typOffset*64 + typeBase))
 			println("Restoring typ ", typ.string(), " at index ", i+2, " numAssigned = ", numAssigned)
 		}
 
@@ -237,6 +235,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
+	// go typAllocThread()
 
 	if !firstInit {
 		// Enable garbage collection
@@ -950,10 +949,18 @@ func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr 
 }
 
 var typAssigns [50000]int
+
 var typProf [50000]uint64
-var lastAlloc [50000]int64
-var numAssigned uint64
-var typeBase uintptr
+var prevAllocs [50000]uint64
+
+var numAssigned int
+
+var typeBase uintptr // used to compute typ offset
+
+var typMap [50000]*_type
+var sizeclassMap [50000]uint8
+
+var numTypToCheck uint64
 
 func init() {
 	numAssigned = 1
@@ -962,102 +969,101 @@ func init() {
 	// reflect function itself.. or wherever it is first computed
 }
 
-var numTypes int64
-var typHashes [50]uint32
+func LoopSleep() {
+	for i := 0; i < 100000; i++ {
+		usleep(1000000)
+		typProf[0]++
+	}
+	println(typProf[0])
+}
+
+func typAllocThread() {
+	println(" gomaxprocs is ", gomaxprocs)
+	if numAssigned == maxTypes-1 {
+		// If we are coming from a restart path, all possible space may already
+		// be used for caching types
+		return
+	}
+
+	// THIS function can implement some kind of moving average scheme.. more
+	// weight to recent allocations and less weight to past allocations
+
+	/*
+		var lastTime int64
+			currTime := nanotime()
+			if currTime-lastTime < (1000000000) {
+				println("yielding")
+				procyield(1000000000)
+			} else {
+				println("IN")
+			}
+	*/
+	for {
+		timeSleep(1000000)
+		for i := uint64(0); i < numTypToCheck; i++ {
+			//println("LOOP")
+			typ := typMap[i]
+			off := uintptr(0)
+			if typ != nil {
+				off = (uintptr(unsafe.Pointer(typ)) - typeBase) / 64
+			}
+			if off != 0 && typAssigns[off] == 0 {
+				//	println("typ ", typ.string(), " alloc'd ", typProf[off], " times")
+				sz := sizeclassMap[off]
+				threshAllocs := uint64(class_to_objects[sz])
+				currAllocs := typProf[off]
+				if currAllocs > threshAllocs {
+					freq := (typProf[off] - prevAllocs[off])
+					if freq > 100 { // TODO - CHANGE FREQ PER SECOND
+						numAssigned++
+						typAssigns[off] = numAssigned
+						// store the mapping persistently
+						pmemHeader.typeMap[numAssigned-2] = off
+						PersistRange(unsafe.Pointer(&pmemHeader.typeMap[numAssigned-2]), intSize)
+						typMap[i] = nil
+						if numAssigned == maxTypes-1 {
+							// no more space to cache entries so quit this fn
+							// we can also add a boolean flag that says if
+							// profiling is ongoing or not
+							println("NO MORE SPACE LEFT IN CACHE - QUITING")
+							return
+						}
+					}
+				}
+				prevAllocs[off] = currAllocs
+			}
+		}
+	}
+}
 
 // map between type and a constant
 func typeIndex(typ *_type, sizeclass uint8) int {
-	/*
-	 *    found := false
-	 *    for i := 0; i < int(numTypes); i++ {
-	 *        if typHashes[i] == typ.hash {
-	 *            found = true
-	 *            break
-	 *        }
-	 *    }
-	 *
-	 *    if !found {
-	 *        atomic.Xaddint64(&numTypes, 1)
-	 *        typHashes[int(numTypes)-1] = typ.hash
-	 *        println("Typ = ", typ.string(), " hash = ", typ.hash)
-	 *    }
-	 *
-	 */
-	//switch typ.hash {
-	//case 1958318709: // redis.entry (1) 9672059
-	//return 1
-	//case 1231536609, 942571231: // []pmem.namedObject, []uint8 (2) 2000001
-	//return 2
-	//case 2912989429: // redis.eI2 187405
-	//return 3
-	//case 4129549170: // transaction.entry (3) 1024
-	//return 4
-	//case 1411583090: // transaction.undoTx (4) 512
-	//return 5
-	//case 1978800597: // transaction.redoTx (5) 512
-	//return 0
-	//case 565663992: // go1.binaryNode
-	//return 1
-	//default:
-	//return 0
-	//}
-
 	// Slices are always cached at index 1
 	if typ.kind&kindSlice == kindSlice {
 		return 1
 	}
 
-	threshAllocs := uint64(class_to_objects[sizeclass])
 	tu := uintptr(unsafe.Pointer(typ))
-	typOffset := (tu - typeBase) / 64
+	// TODO - THIS IS INCORRECT.. TYP POINTER IS NOT A MULTIPLE OF 64
+	offset := (tu - typeBase) / 64
 
-	if typOffset >= 50000 {
-		println("typ = ", unsafe.Pointer(typ), " typeBase = ", unsafe.Pointer(typeBase), " index = ", typOffset)
+	// THESE ARE DEBUG.. TO BE REMOVED
+	if offset >= 50000 || offset == 0 {
+		println("typ = ", unsafe.Pointer(typ), " typeBase = ", unsafe.Pointer(typeBase), " index = ", offset)
 		throw("Index overflow")
 	}
 
-	// Coming from the restart path -> set the count as threshAllocs during re-init
-retry:
-	curVal := atomic.Load64(&typProf[typOffset]) // CHANGE THIS TO AN ATOMIC READ
-	if curVal > threshAllocs {
-		// some threads might still get the value as 0, it is ok
-		return typAssigns[typOffset]
+	if typAssigns[offset] != 0 {
+		return typAssigns[offset]
 	}
-
-	if atomic.Cas64(&typProf[typOffset], curVal, curVal+1) == false {
-		goto retry
-	}
-
-	if curVal+1 == threshAllocs-1 {
-		lastAlloc[typOffset] = nanotime()
-	} else if curVal+1 == threshAllocs {
-	retryAssign:
-		nA := atomic.Load64(&numAssigned)
-		if nA == 5 { // used all cached entries
-			return 0
-		}
-
-		curTime := nanotime()
-		freq := (curTime - lastAlloc[typOffset])
-
-		if freq > 1000000000 {
-			// if the frequency of allocation is less than 1 per second, then
-			// do not cache it
-			return 0
-		}
-
-		if atomic.Cas64(&numAssigned, nA, nA+1) == false {
-			goto retryAssign
-		}
-
-		println("storing typ ", typ.string(), " at index ", nA+1)
-		typAssigns[typOffset] = int(nA + 1)
-
-		// store the mapping persistently
-		pmemHeader.typeMap[nA-1] = uintptr(unsafe.Pointer(typ))
-		PersistRange(unsafe.Pointer(&pmemHeader.typeMap[nA-1]), intSize)
-
-		return typAssigns[typOffset]
+	// WE WOULD EXHAUST THE HEAP BEFORE THE COUNTER WRAPS AROUND..
+	count := atomic.Xadd64(&typProf[offset], 1)
+	if count == 1 {
+		sizeclassMap[offset] = sizeclass
+		num := atomic.Xadd64(&numTypToCheck, 1)
+		// the data race here is okay. typAllocThread() will check that the
+		// offset is non-zero before acting on it.
+		typMap[num-1] = typ
 	}
 
 	return 0
