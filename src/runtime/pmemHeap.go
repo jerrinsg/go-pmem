@@ -235,7 +235,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 
 	// Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
-	// go typAllocThread()
+	go typAllocThread()
 
 	if !firstInit {
 		// Enable garbage collection
@@ -969,16 +969,7 @@ func init() {
 	// reflect function itself.. or wherever it is first computed
 }
 
-func LoopSleep() {
-	for i := 0; i < 100000; i++ {
-		usleep(1000000)
-		typProf[0]++
-	}
-	println(typProf[0])
-}
-
 func typAllocThread() {
-	println(" gomaxprocs is ", gomaxprocs)
 	if numAssigned == maxTypes-1 {
 		// If we are coming from a restart path, all possible space may already
 		// be used for caching types
@@ -999,16 +990,14 @@ func typAllocThread() {
 			}
 	*/
 	for {
-		timeSleep(1000000)
+		timeSleep(100000000) // keep at 100 ms
 		for i := uint64(0); i < numTypToCheck; i++ {
-			//println("LOOP")
 			typ := typMap[i]
 			off := uintptr(0)
 			if typ != nil {
 				off = (uintptr(unsafe.Pointer(typ)) - typeBase) / 64
 			}
 			if off != 0 && typAssigns[off] == 0 {
-				//	println("typ ", typ.string(), " alloc'd ", typProf[off], " times")
 				sz := sizeclassMap[off]
 				threshAllocs := uint64(class_to_objects[sz])
 				currAllocs := typProf[off]
@@ -1025,7 +1014,6 @@ func typAllocThread() {
 							// no more space to cache entries so quit this fn
 							// we can also add a boolean flag that says if
 							// profiling is ongoing or not
-							println("NO MORE SPACE LEFT IN CACHE - QUITING")
 							return
 						}
 					}

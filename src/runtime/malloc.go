@@ -821,10 +821,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		throw("mallocgc called with gcphase == _GCmarktermination")
 	}
 
-	if memtype == isPersistent {
-	//	println("allocation request for size ", size, " of type ", typ.string(), " hash = ", typ.hash, " typ.size = ", typ.size)
-	}
-
 	if size == 0 {
 		if memtype == isPersistent {
 			// For a 0-byte allocation, volatile allocator always returns the
@@ -1005,7 +1001,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 
 	span.typIndex = typInd
 	if newSpan && memtype == isPersistent {
-
 		logSpanAlloc(span)
 	}
 
