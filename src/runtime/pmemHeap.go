@@ -173,6 +173,8 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 				or initialization is ongoing`)
 	}
 
+	println("Init file ", fname)
+
 	// Set the persistent memory file name. This will be used to map the file
 	// into memory in growPmemRegion().
 	pmemInfo.fname = fname

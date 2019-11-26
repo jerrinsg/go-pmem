@@ -981,11 +981,13 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			x = unsafe.Pointer(v)
 			if needzero && span.needzero != 0 {
 				memclrNoHeapPointers(unsafe.Pointer(v), size)
+				// TODO: persist this memclr
 			}
 		}
 	} else {
 		shouldhelpgc = true
 		systemstack(func() {
+			// TODO: there might be a memclr inside this code path
 			span = largeAlloc(size, needzero, noscan, memtype)
 		})
 		span.freeindex = 1

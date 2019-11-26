@@ -77,6 +77,8 @@ func (f *fixalloc) alloc() unsafe.Pointer {
 		return v
 	}
 	if uintptr(f.nchunk) < f.size {
+		// TODO: assert here that allocationSize exceeds mcache{} (and other
+		// datastructure) size.
 		allocationSize := uintptr(_FixAllocChunk << 2)
 		f.chunk = uintptr(persistentalloc(allocationSize, 0, f.stat))
 		f.nchunk = uint32(allocationSize)

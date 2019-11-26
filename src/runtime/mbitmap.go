@@ -1042,6 +1042,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 	outOfPlace := false
 	if arenaIndex(x+size-1) != arenaIdx(h.arena) || (doubleCheck && fastrand()%2 == 0) {
 		if shouldLog {
+			// TODO: can heapTmpArray be avoided
 			heapTmpArray = uintptr(unsafe.Pointer(&bitsArray[0]))
 			if (size+31)/32 > 64 {
 				println("size = ", size, " data size = ", dataSize)
