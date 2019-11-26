@@ -86,17 +86,17 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
 
 		gcDataAddr := unsafe.Pointer(tAU + 32)
-		memclrNoHeapPointers(gcDataAddr, 16)
+		// memclrNoHeapPointers(gcDataAddr, 16) //  IS THIS REQUIRED?
 		memmove(gcDataAddr, unsafe.Pointer(typ.gcdata), numHeapTypeBytes)
 
 		// print("typIndex = ", *typAddr, " Logging: kind = ", typ.kind, " size = ", typ.size, "ptrdata = ", typ.ptrdata, " heap bits -- ")
 
-		var ptrByteAddr *byte
-		ptrByteAddr = (*byte)(gcDataAddr)
-		for i := uintptr(0); i < numHeapTypeBytes; i++ {
+		//var ptrByteAddr *byte
+		//ptrByteAddr = (*byte)(gcDataAddr)
+		//for i := uintptr(0); i < numHeapTypeBytes; i++ {
 			// print(*ptrByteAddr, " ")
-			ptrByteAddr = addb(ptrByteAddr, 1)
-		}
+			//ptrByteAddr = addb(ptrByteAddr, 1)
+		//}
 		//println("")
 
 		PersistRange(unsafe.Pointer(typAddr), numHeapTypeBytes+32)
@@ -162,7 +162,8 @@ func logSpanAlloc(s *mspan) {
 	}
 
 	atomic.Store(logAddr, logVal)
-	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
+	// Store fence will be called at the end of mallocgc()
+	FlushRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
 }
 
 // Function to log that a span has been completely freed. This is done by

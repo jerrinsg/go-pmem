@@ -1031,6 +1031,12 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			scanSize = typ.ptrdata
 		}
 		c.local_scan += scanSize
+	} else if newSpan && memtype == isPersistent {
+		// Minor optimization: logSpanAlloc only calls a FlushRange(). If
+		// heap bits are logged for this span, then heapBitsSetType() will call
+		// a memory fence to ensure persistent memory writes are persisted.
+		// Otherwise explicitly call a memory fence function here.
+		Fence()
 	}
 
 	// Ensure that the stores above that initialize x to
