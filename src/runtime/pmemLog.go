@@ -94,8 +94,8 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 		//var ptrByteAddr *byte
 		//ptrByteAddr = (*byte)(gcDataAddr)
 		//for i := uintptr(0); i < numHeapTypeBytes; i++ {
-			// print(*ptrByteAddr, " ")
-			//ptrByteAddr = addb(ptrByteAddr, 1)
+		// print(*ptrByteAddr, " ")
+		//ptrByteAddr = addb(ptrByteAddr, 1)
 		//}
 		//println("")
 
@@ -289,4 +289,59 @@ func (pa *pArena) commitLog() {
 	}
 	pa.numLogEntries = 0
 	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
+}
+
+func LogAddPtrs(objPtr uintptr, objSize int, ptrArray []unsafe.Pointer) []unsafe.Pointer {
+	s := spanOfUnchecked(objPtr)
+	if s.spanclass.noscan() {
+		// this is a noscan span.. so no pointers within it
+		return ptrArray
+	}
+
+	h := heapBitsForAddr(objPtr)
+
+	// First 8 bytes
+	if h.isPointer() {
+		ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+	}
+	if !h.morePointers() {
+		goto RETURN
+	}
+	objSize -= 8
+	if objSize == 0 {
+		goto RETURN
+	}
+	objPtr += 8
+	h = h.next()
+
+
+	// Second 8 bytes
+	if h.isPointer() {
+		ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+	}
+	objSize -= 8
+	if objSize == 0 {
+		goto RETURN
+	}
+	h = h.next()
+	objPtr += 8
+
+	// Rest of the objects
+	for {
+		if h.isPointer() {
+			ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+		}
+		if !h.morePointers() {
+			goto RETURN
+		}
+
+		objPtr += 8
+		objSize -= 8
+		if objSize == 0 {
+			break
+		}
+		h = h.next()
+	}
+RETURN:
+	return ptrArray
 }
