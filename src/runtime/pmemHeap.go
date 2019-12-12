@@ -173,8 +173,6 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 				or initialization is ongoing`)
 	}
 
-	println("Init file ", fname)
-
 	// Set the persistent memory file name. This will be used to map the file
 	// into memory in growPmemRegion().
 	pmemInfo.fname = fname
@@ -256,6 +254,9 @@ type arenaInfo struct {
 	// The address at which the arena is mapped in this run. This would be
 	// different than pa.mapAddr if the arena mapping address changed.
 	mapAddr uintptr
+
+	// Used to copy heap type bitmap into
+	bitsArray []byte
 }
 
 func mapArenas() error {
@@ -317,7 +318,7 @@ func mapArenas() error {
 
 		// Point the arena header at the actual mapped region
 		parena = (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
-		ar := &arenaInfo{parena, uintptr(mapAddr)}
+		ar := &arenaInfo{parena, uintptr(mapAddr), make([]byte, 1024)}
 		// Reconstruct the spans in this arena
 		ar.reconstruct()
 		// RECONSTRUCT CAN BE CALLED LIKE OUTSIDE THE LOOP IN A PARALLEL WAY..
@@ -611,6 +612,18 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	parena := (*pArena)(unsafe.Pointer(s.pArena))
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
+	var tmpHeapBitsAddr uintptr
+
+	// CHECK IF BITSARRAY IS SUFFICIENTLY BIG ENOUGH TO STORE HEAP TYPE BITMAP
+	// FOR THIS SPAN
+	if !s.spanclass.noscan() {
+		// 2 bits per 8 bytes
+		numBytesReqd := ((2 * s.elemsize/8) + 7) / 8
+		if len(ar.bitsArray) < int(numBytesReqd) {
+			ar.bitsArray = make([]byte, numBytesReqd)
+		}
+		tmpHeapBitsAddr = uintptr(unsafe.Pointer(&ar.bitsArray[0]))
+	}
 
 	// DISTINGUISH BETWEEN TWO CASES -- PMAKE ALLOCATIONS AND PNEW ALLOCATIONS
 	// MAYBE COULD BE DISTINGUISHED USING DATASIZE AND SIZE PARAMETERS
@@ -650,10 +663,9 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 
 		startAddr := s.base()
 		for k := uintptr(0); k < s.nelems; k++ {
-			heapBitsSetType(startAddr, s.elemsize, gTyp.size, &gTyp, false)
+			heapBitsSetType(startAddr, s.elemsize, gTyp.size, &gTyp, tmpHeapBitsAddr)
 			startAddr += s.elemsize
 		}
-
 		return
 	}
 

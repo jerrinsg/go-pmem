@@ -936,16 +936,20 @@ func (s *mspan) countAlloc() int {
 // machines, callers must execute a store/store (publication) barrier
 // between calling this function and making the object reachable.
 //
-// shouldLog indicates whether the heap bits should be logged in the persistent
-// memory heap type bitmap. Heap type bit logging is done for objects created in
-// persistent memory region.
-func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
+// metadata contains two pieces of information - bit 0 of metadata indicates
+// whether the heap type bits need to be logged in the persistent memory heap
+// type bitmap. Heap type bit logging is done for objects created in
+// persistent memory region. The other bits of metadata contains the address
+// that is to be used to store heap type bits temporarily if this span spans
+// multiple arenas
+func heapBitsSetType(x, size, dataSize uintptr, typ *_type, metadata uintptr) {
+	shouldLog := metadata & 1 == 1
+	tmpHeapBitsAddr := (metadata >> 1) << 1 // Clear the last bit
+
 	// startAddr and endAddr indicates the heap type bitmap address range that must
 	// be logged in persistent memory.
 	var startAddr, endAddr *byte
 	const doubleCheck = false // slow but helpful; enable to test modifications to this code
-	var bitsArray [64]byte
-	heapTmpArray := x
 
 	// dataSize is always size rounded up to the next malloc size class,
 	// except in the case of allocating a defer block, in which case
@@ -1041,14 +1045,6 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 
 	outOfPlace := false
 	if arenaIndex(x+size-1) != arenaIdx(h.arena) || (doubleCheck && fastrand()%2 == 0) {
-		if shouldLog {
-			// TODO: can heapTmpArray be avoided
-			heapTmpArray = uintptr(unsafe.Pointer(&bitsArray[0]))
-			if (size+31)/32 > 64 {
-				println("size = ", size, " data size = ", dataSize)
-				throw("currently supporting only 64 bytes..")
-			}
-		}
 		// This object spans heap arenas, so the bitmap may be
 		// discontiguous. Unroll it into the object instead
 		// and then copy it out.
@@ -1056,7 +1052,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, shouldLog bool) {
 		// In doubleCheck mode, we randomly do this anyway to
 		// stress test the bitmap copying path.
 		outOfPlace = true
-		h.bitp = (*uint8)(unsafe.Pointer(heapTmpArray))
+		h.bitp = (*uint8)(unsafe.Pointer(tmpHeapBitsAddr))
 		h.last = nil
 		startAddr = h.bitp
 		endAddr = h.bitp
@@ -1408,7 +1404,7 @@ Phase4:
 		// cnw is the number of heap words, or bit pairs
 		// remaining (like nw above).
 		cnw := size / sys.PtrSize
-		src := (*uint8)(unsafe.Pointer(heapTmpArray))
+		src := (*uint8)(unsafe.Pointer(tmpHeapBitsAddr))
 		// We know the first and last byte of the bitmap are
 		// not the same, but it's still possible for small
 		// objects span arenas, so it may share bitmap bytes
@@ -1465,7 +1461,7 @@ Phase4:
 			hbitp = h.bitp
 		}
 		// Zero the object where we wrote the bitmap.
-		memclrNoHeapPointers(unsafe.Pointer(heapTmpArray), uintptr(unsafe.Pointer(src))-heapTmpArray)
+		memclrNoHeapPointers(unsafe.Pointer(tmpHeapBitsAddr), uintptr(unsafe.Pointer(src))-tmpHeapBitsAddr)
 	}
 
 	// Double check the whole bitmap.

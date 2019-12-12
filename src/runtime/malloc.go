@@ -1021,7 +1021,12 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			println("Calling heap set type x = ", x, " size = ", size, " dataSize = ", dataSize, " typ.size = ", typ.size,
 				" typ.ptrdata = ", typ.ptrdata)
 		}
-		heapBitsSetType(uintptr(x), size, dataSize, typ, (newSpan || typInd == 0) && memtype == isPersistent)
+		metadata := uintptr(x)
+		shouldLog := (newSpan || typInd == 0) && memtype == isPersistent
+		if shouldLog {
+			metadata |= 1
+		}
+		heapBitsSetType(uintptr(x), size, dataSize, typ, metadata)
 		if dataSize > typ.size {
 			// Array allocation. If there are any
 			// pointers, GC has to scan to the last
