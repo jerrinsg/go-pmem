@@ -14,6 +14,8 @@ var (
 	TxLogFnStkSize  int64
 	TxLog2FnOffset  int64
 	TxLog2FnStkSize int64
+	TxLog3FnOffset  int64
+	TxLog3FnStkSize int64
 )
 
 func needLog(v *Value) bool {
@@ -113,7 +115,7 @@ loop:
 					if willAccessPmem(ptr) {
 						// no need to call runtime.inPmem() & create new ssa blocks. Only emit
 						// tx.Log() call here
-						mem = txLog2Call(pos, b, mem, sb, sp, ptr, txHandle)
+						mem = txLog3Call(pos, b, mem, sb, sp, ptr, txHandle)
 						v.RemoveArg(2)
 						v.AddArg(mem)
 						b.Values = append(b.Values, after...)
@@ -146,7 +148,7 @@ loop:
 
 						// prepare the then block.
 						// emit tx.Log() call here
-						memThen := txLog2Call(pos, bThen, memIf, sb, sp, ptr, txHandle)
+						memThen := txLog3Call(pos, bThen, memIf, sb, sp, ptr, txHandle)
 
 						// NO ELSE block
 
@@ -330,6 +332,67 @@ func txLog2Call(pos src.XPos, b *Block, mem, sb, sp, ptr, txHandle *Value) *Valu
 	// This depends on the signature of Log2() method in the transaction interface
 	// This is set by gc for simplicity
 	mem.AuxInt = TxLog2FnStkSize
+	return mem
+}
+
+func txLog3Call(pos src.XPos, b *Block, mem, sb, sp, ptr, txHandle *Value) *Value {
+	f := b.Func
+	widthPtr := int64(types.Widthptr)
+	byteptr := f.Config.Types.BytePtr
+	elemType := ptr.Type.Elem()
+
+	// TODO: Assumed signature of Log3 is:
+	// func Log3(src, size uintptr) error
+
+	// TxHandle set by gc/ssa.go should be of type unsafe.Pointer and infact points
+	// to an interface stored in memory in the following format (see runtime/runtim2.go):
+	// type iface struct {
+	// tab  *itab
+	// data unsafe.Pointer
+	// }
+	// If runtime's representation of interface (iface) changes, below code also
+	// needs to change
+	p := b.NewValue1I(pos, OpOffPtr, f.Config.Types.UintptrPtr, widthPtr, txHandle)
+	txHandleData := b.NewValue2(pos, OpLoad, byteptr, p, mem)
+	txHandle = b.NewValue2(pos, OpLoad, f.Config.Types.Uintptr, txHandle, mem)
+
+	// Below calculation based on representation of itab in runtime (see runtime/runtime2.go) which is:
+	// type itab struct {
+	// inter *interfacetype
+	// _type *_type
+	// hash  uint32 // copy of _type.hash. Used for type switches.
+	// _     [4]byte
+	// fun   [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
+	// }
+	// If runtime's representation of itab changes, below calculation needs to change
+	fnOffset := TxLog3FnOffset + 2*int64(widthPtr) + 8
+	fn := b.NewValue1I(pos, OpOffPtr, f.Config.Types.UintptrPtr, fnOffset, txHandle)
+	codeptr := b.NewValue2(pos, OpLoad, f.Config.Types.Uintptr, fn, mem)
+
+	// Start storing args before making method call
+	off := f.Config.ctxt.FixedFrameSize()
+	// Store receiver
+	addr := b.NewValue1I(pos, OpOffPtr, f.Config.Types.UintptrPtr, off, sp)
+	mem = b.NewValue3A(pos, OpStore, types.TypeMem, f.Config.Types.Uintptr, addr, txHandleData, mem)
+
+	// Store args to the method. For Log3(), first arg is unsafe pointer,
+	// and second arg is size of type to be stored in transaction logs.
+	// Store src
+	unsafePtrType := types.Types[types.TUNSAFEPTR]
+	off += f.Config.Types.Uintptr.Size()
+	addr = b.NewValue1I(pos, OpOffPtr, unsafePtrType, off, sp)
+	mem = b.NewValue3A(pos, OpStore, types.TypeMem, byteptr, addr, ptr, mem)
+	// Store size
+	off += byteptr.Size()
+	addr = b.NewValue1I(pos, OpOffPtr, f.Config.Types.UintptrPtr, off, sp)
+	mem = b.NewValue3A(pos, OpStore, types.TypeMem, f.Config.Types.Uintptr, addr, f.ConstInt64(f.Config.Types.UInt64, elemType.Size()), mem)
+
+	// Issue call to Log3() method
+	mem = b.NewValue2(pos, OpInterCall, types.TypeMem, codeptr, mem)
+
+	// This depends on the signature of Log3() method in the transaction interface
+	// This is set by gc for simplicity
+	mem.AuxInt = TxLog3FnStkSize
 	return mem
 }
 

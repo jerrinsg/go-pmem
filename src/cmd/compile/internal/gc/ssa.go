@@ -243,6 +243,10 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 		dowidth(txLog2.Type)
 		ssa.TxLog2FnOffset = txLog2.Xoffset
 		ssa.TxLog2FnStkSize = txLog2.Type.ArgWidth()
+		txLog3 := typecheck(txLog3Fn.Left, Ecall) // txLog3 = txn.Log3, not the function call
+		dowidth(txLog3.Type)
+		ssa.TxLog3FnOffset = txLog3.Xoffset
+		ssa.TxLog3FnStkSize = txLog3.Type.ArgWidth()
 	}
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
