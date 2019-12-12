@@ -292,6 +292,7 @@ func (pa *pArena) commitLog() {
 }
 
 func LogAddPtrs(objPtr uintptr, objSize int, ptrArray []unsafe.Pointer) []unsafe.Pointer {
+	ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
 	s := spanOfUnchecked(objPtr)
 	if s.spanclass.noscan() {
 		// this is a noscan span.. so no pointers within it
