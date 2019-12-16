@@ -305,7 +305,6 @@ func mapArenas() error {
 				return errorString("Arena mapping failed")
 			}
 		}
-		println("Mapped arena originally at ", arenaMapAddr, " at ", mapAddr)
 
 		// Create the volatile memory arena datastructures for the newly mapped
 		// heap regions. Each volatile arena datastructure contains the runtime
@@ -618,7 +617,7 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 	// FOR THIS SPAN
 	if !s.spanclass.noscan() {
 		// 2 bits per 8 bytes
-		numBytesReqd := ((2 * s.elemsize/8) + 7) / 8
+		numBytesReqd := ((2 * s.elemsize / 8) + 7) / 8
 		if len(ar.bitsArray) < int(numBytesReqd) {
 			ar.bitsArray = make([]byte, numBytesReqd)
 		}

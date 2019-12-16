@@ -292,14 +292,12 @@ func (pa *pArena) commitLog() {
 }
 
 func LogAddPtrs(objPtr uintptr, objSize int, ptrArray []unsafe.Pointer) []unsafe.Pointer {
-	ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
 	s := spanOfUnchecked(objPtr)
+	h := heapBitsForAddr(objPtr)
 	if s.spanclass.noscan() {
 		// this is a noscan span.. so no pointers within it
-		return ptrArray
+		goto RETURN
 	}
-
-	h := heapBitsForAddr(objPtr)
 
 	// First 8 bytes
 	if h.isPointer() {
@@ -314,7 +312,6 @@ func LogAddPtrs(objPtr uintptr, objSize int, ptrArray []unsafe.Pointer) []unsafe
 	}
 	objPtr += 8
 	h = h.next()
-
 
 	// Second 8 bytes
 	if h.isPointer() {
