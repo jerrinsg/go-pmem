@@ -698,16 +698,23 @@ type tuple struct {
 	s, e uintptr
 }
 
+var (
+	// TODO move this to a swizzling specific data structure
+	// The offset table stores, for each arena, the delta value by which pointers
+	// that point into this arena should be offset by.
+	offsetTable []int
+
+	// rangeTable stores the address range at which each arena is mapped at.
+	rangeTable []tuple
+)
+
 func swizzleArenas(arenas []*arenaInfo) (err error) {
 	// Channel used to synchronize between goroutines that are used to swizzle
 	// arenas.
 	dc := make(chan bool, len(arenas))
-	// The offset table stores, for each arena, the delta value by which pointers
-	// that point into this arena should be offset by.
-	offsetTable := make([]int, len(arenas))
 
-	// rangeTable stores the address range at which each arena is mapped at.
-	rangeTable := make([]tuple, len(arenas))
+	offsetTable = make([]int, len(arenas))
+	rangeTable = make([]tuple, len(arenas))
 
 	if pmemHeader.swizzleState == swizzleSetup {
 		// There was a swizzle setup operating happening which did not complete.
@@ -738,7 +745,7 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 		// Complete any partially completed swizzling operation
 		for _, ar := range arenas {
-			go ar.swizzle(offsetTable, rangeTable, dc)
+			go ar.swizzle(dc)
 		}
 		// Wait until all goroutines complete swizzling.
 		for range arenas {
@@ -797,7 +804,7 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 	// Swizzle pointers in each arena
 	for _, ar := range arenas {
-		go ar.swizzle(offsetTable, rangeTable, dc)
+		go ar.swizzle(dc)
 	}
 	// Wait until all goroutines complete swizzling.
 	for range arenas {
@@ -863,7 +870,7 @@ func findArenaIndex(x uintptr, rangeTable []tuple) int {
 
 // Swizzle arena pa. skip is the number of bytes in the beginning of the arena
 // that has to be skipped for swizzling.
-func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool) {
+func (ar *arenaInfo) swizzle(dc chan bool) {
 	pa := ar.pa
 	mdata, allocSize := pa.layout()
 
@@ -918,7 +925,7 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 				if *au == 0 {
 					continue
 				}
-				newAddr := swizzlePointer(*au, offsetTable, rangeTable)
+				newAddr := SwizzlePointer(*au)
 				if newAddr == *au {
 					// The swizzled address is the same as the current address.
 					// Skip writing this.
@@ -947,9 +954,8 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 	dc <- true
 }
 
-// Given the offset table and the range table, swizzlePointer() computes the
-// swizzled pointer address correspondong to 'ptr'.
-func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr {
+//SwizzlePointer() computes the swizzled pointer address corresponding to 'ptr'.
+func SwizzlePointer(ptr uintptr) uintptr {
 	// If findArenaIndex() returns -1, it indicates that 'ptr' is not a
 	// valid persistent memory address. Hence return 0.
 	ind := findArenaIndex(ptr, rangeTable)
