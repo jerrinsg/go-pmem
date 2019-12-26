@@ -223,8 +223,8 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 			typOffset := pmemHeader.typeMap[i]
 			typAssigns[typOffset] = i + 2
 			numAssigned++
-			typ := (*_type)(unsafe.Pointer(typOffset*64 + typeBase))
-			println("Restoring typ ", typ.string(), " at index ", i+2, " numAssigned = ", numAssigned)
+			//typ := (*_type)(unsafe.Pointer(typOffset*32 + typeBase))
+			//println("Restoring typ ", typ.string(), " at index ", i+2, " numAssigned = ", numAssigned)
 		}
 
 		// Map all arenas found in the persistent memory file to memory. This
@@ -997,6 +997,9 @@ func init() {
 	sections, _ := reflect_typelinks()
 	typeBase = uintptr(unsafe.Pointer(sections[0])) // can be assigned from the
 	// reflect function itself.. or wherever it is first computed
+	if typeBase%32 != 0 {
+		throw("Typebase is not at a multiple of 32")
+	}
 }
 
 func typAllocThread() {
@@ -1025,7 +1028,7 @@ func typAllocThread() {
 			typ := typMap[i]
 			off := uintptr(0)
 			if typ != nil {
-				off = (uintptr(unsafe.Pointer(typ)) - typeBase) / 64
+				off = (uintptr(unsafe.Pointer(typ)) - typeBase) / 32
 			}
 			if off != 0 && typAssigns[off] == 0 {
 				sz := sizeclassMap[off]
@@ -1056,19 +1059,18 @@ func typAllocThread() {
 
 // map between type and a constant
 func typeIndex(typ *_type, sizeclass uint8) int {
+
 	// Slices are always cached at index 1
 	if typ.kind&kindSlice == kindSlice {
 		return 1
 	}
 
 	tu := uintptr(unsafe.Pointer(typ))
-	// TODO - THIS IS INCORRECT.. TYP POINTER IS NOT A MULTIPLE OF 64
-	offset := (tu - typeBase) / 64
+	offset := (tu - typeBase) / 32
 
-	// THESE ARE DEBUG.. TO BE REMOVED
-	if offset >= 50000 || offset == 0 {
+	if offset >= 50000 || tu%32 != 0 {
 		println("typ = ", unsafe.Pointer(typ), " typeBase = ", unsafe.Pointer(typeBase), " index = ", offset)
-		throw("Index overflow")
+		throw("Index overflow or tu not a multiple of 32")
 	}
 
 	if typAssigns[offset] != 0 {
