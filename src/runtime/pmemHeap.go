@@ -41,7 +41,7 @@ const (
 	// The number of types that we want to cache separately in the mcache
 	// (including slices which is always cached at index 1). If a type is not
 	// specially cached, it occupies slot 0.
-	maxTypes = 6
+	maxTypes = 51
 
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
