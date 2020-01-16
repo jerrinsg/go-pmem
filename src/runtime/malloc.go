@@ -1003,13 +1003,16 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		if typ == deferType {
 			dataSize = unsafe.Sizeof(_defer{})
 		}
-		if false {
-			println("Calling heap set type x = ", x, " size = ", size, " dataSize = ", dataSize, " typ.size = ", typ.size,
-				" typ.ptrdata = ", typ.ptrdata)
-		}
+
 		metadata := uintptr(x)
 		shouldLog := (newSpan || typInd == 0) && memtype == isPersistent
 		if shouldLog {
+			// This is a scan allocation (allocated object has a pointer within
+			// it). So, allocation size is at least 8 bytes. The allocation size
+			// rounded up to the next malloc sizeclass will be an even number
+			// and hence have its last bit unset. We use this last bit of the
+			// allocated address to indicate if heap type bits should be logged.
+			// The last bit
 			metadata |= 1
 		}
 		heapBitsSetType(uintptr(x), size, dataSize, typ, metadata)

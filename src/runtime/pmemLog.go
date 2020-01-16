@@ -39,21 +39,6 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 	pArena := (*pArena)(unsafe.Pointer(span.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
 
-	if false {
-		println("typ size = ", typ.size, " ptrdata = ", typ.ptrdata)
-		hbT := heapBitsForAddr(addr)
-		println("logHeapBits - numHeapBytes = ", numHeapBytes)
-		println("startByte = ", unsafe.Pointer(startByte), " heapBitsForAddr = ", unsafe.Pointer(hbT.bitp))
-		hbits := startByte
-		for i := uintptr(0); i < numHeapBytes; i++ {
-
-			println(*hbits, " - ", (*hbits&(1<<7))>>7, " ", (*hbits&(1<<6))>>6, " ", (*hbits&(1<<5))>>5, " ",
-				(*hbits&(1<<4))>>4, " ", (*hbits&(1<<3))>>3, " ", (*hbits&(1<<2))>>2, " ",
-				(*hbits&(1<<1))>>1, " ", (*hbits & 1))
-			hbits = addb(hbits, 1)
-		}
-	}
-
 	// RATHER THAN LOG ONCE SHOULD WE AT THIS POINT LOG THE BITS FOR ALL POTENTIAL
 	// OBJECTS SO THAT RECOVERY WOULD JUST BE A MEMCPY
 
@@ -80,7 +65,6 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 
 		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
 		*ptrAddr = typ.ptrdata
-		//println("TYPE SIZE = ", typ.size, " SPAN SIZE = ", span.elemsize)
 
 		numHeapTypeBits := (typ.ptrdata + 7) / 8
 		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
@@ -88,16 +72,6 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 		gcDataAddr := unsafe.Pointer(tAU + 32)
 		// memclrNoHeapPointers(gcDataAddr, 16) //  IS THIS REQUIRED?
 		memmove(gcDataAddr, unsafe.Pointer(typ.gcdata), numHeapTypeBytes)
-
-		// print("typIndex = ", *typAddr, " Logging: kind = ", typ.kind, " size = ", typ.size, "ptrdata = ", typ.ptrdata, " heap bits -- ")
-
-		//var ptrByteAddr *byte
-		//ptrByteAddr = (*byte)(gcDataAddr)
-		//for i := uintptr(0); i < numHeapTypeBytes; i++ {
-		// print(*ptrByteAddr, " ")
-		//ptrByteAddr = addb(ptrByteAddr, 1)
-		//}
-		//println("")
 
 		PersistRange(unsafe.Pointer(typAddr), numHeapTypeBytes+32)
 	} else {

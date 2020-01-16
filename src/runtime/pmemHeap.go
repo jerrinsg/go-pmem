@@ -223,8 +223,6 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 			typOffset := pmemHeader.typeMap[i]
 			typAssigns[typOffset] = i + 2
 			numAssigned++
-			//typ := (*_type)(unsafe.Pointer(typOffset*32 + typeBase))
-			//println("Restoring typ ", typ.string(), " at index ", i+2, " numAssigned = ", numAssigned)
 		}
 
 		// Map all arenas found in the persistent memory file to memory. This
@@ -323,6 +321,7 @@ func mapArenas() error {
 		// Point the arena header at the actual mapped region
 		parena = (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
 		ar := &arenaInfo{parena, uintptr(mapAddr), make([]byte, 1024)}
+		// We are not freeing up these temporary arrays
 		// Reconstruct the spans in this arena
 		ar.reconstruct()
 		// RECONSTRUCT CAN BE CALLED LIKE OUTSIDE THE LOOP IN A PARALLEL WAY..
@@ -400,7 +399,7 @@ func (ar *arenaInfo) reconstruct() {
 			// The heap type bits need to be restored only if the span is known
 			// to have pointers in it.
 			if !s.spanclass.noscan() {
-				ar.restoreSpanHeapBits(s) // POTENTIALLY PARALLEL
+				ar.restoreSpanHeapBits(s)
 			}
 			i += s.npages
 		}
@@ -653,14 +652,11 @@ func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
 		numHeapTypeBits := (gTyp.ptrdata + 7) / 8
 		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
 
-		//print("Read back typIndex as ", s.typIndex, " kind = ", gTyp.kind, " size = ", gTyp.size, "ptrdata = ", gTyp.ptrdata, " heap bits -- ")
 		var ptrByteAddr *byte
 		ptrByteAddr = gTyp.gcdata
 		for i := uintptr(0); i < numHeapTypeBytes; i++ {
-			//print(*ptrByteAddr, " ")
 			ptrByteAddr = addb(ptrByteAddr, 1)
 		}
-		//println("")
 
 		// totSize := s.elemsize * s.nelems
 		// heapBitsSetType(spanAddr, totSize, totSize, &gTyp, false)
@@ -947,9 +943,6 @@ func (ar *arenaInfo) swizzle(dc chan bool) {
 				pa.logEntry(unsafe.Pointer(addr))
 
 				pa.bytesSwizzled = (addr - start + 8)
-				if newAddr == 0 && *au != 0 {
-					// println("Zeroing data at address ", unsafe.Pointer(au), " which had data ", *au)
-				}
 				*au = newAddr
 
 				// Commit persists the changes and then resets the log
@@ -965,7 +958,7 @@ func (ar *arenaInfo) swizzle(dc chan bool) {
 	dc <- true
 }
 
-//SwizzlePointer() computes the swizzled pointer address corresponding to 'ptr'.
+// SwizzlePointer computes the swizzled pointer address corresponding to 'ptr'.
 func SwizzlePointer(ptr uintptr) uintptr {
 	// If findArenaIndex() returns -1, it indicates that 'ptr' is not a
 	// valid persistent memory address. Hence return 0.
@@ -995,9 +988,9 @@ var numTypToCheck uint64
 func init() {
 	numAssigned = 1
 	sections, _ := reflect_typelinks()
-	typeBase = uintptr(unsafe.Pointer(sections[0])) // can be assigned from the
-	// reflect function itself.. or wherever it is first computed
+	typeBase = uintptr(unsafe.Pointer(sections[0]))
 	if typeBase%32 != 0 {
+		// TODO: debug - to remove
 		throw("Typebase is not at a multiple of 32")
 	}
 }
@@ -1009,19 +1002,10 @@ func typAllocThread() {
 		return
 	}
 
-	// THIS function can implement some kind of moving average scheme.. more
-	// weight to recent allocations and less weight to past allocations
+	// TODO: The heuristic used for promoting a type to be cached can be more
+	// detailed such as computing moving average of allocation frequency, giving
+	// more weight to recent allocations and less weight to past allocations.
 
-	/*
-		var lastTime int64
-			currTime := nanotime()
-			if currTime-lastTime < (1000000000) {
-				println("yielding")
-				procyield(1000000000)
-			} else {
-				println("IN")
-			}
-	*/
 	for {
 		timeSleep(100000000) // keep at 100 ms
 		for i := uint64(0); i < numTypToCheck; i++ {
@@ -1044,9 +1028,7 @@ func typAllocThread() {
 						PersistRange(unsafe.Pointer(&pmemHeader.typeMap[numAssigned-2]), intSize)
 						typMap[i] = nil
 						if numAssigned == maxTypes-1 {
-							// no more space to cache entries so quit this fn
-							// we can also add a boolean flag that says if
-							// profiling is ongoing or not
+							// No more space to cache more type entries
 							return
 						}
 					}
@@ -1069,14 +1051,14 @@ func typeIndex(typ *_type, sizeclass uint8) int {
 	offset := (tu - typeBase) / 32
 
 	if offset >= 50000 || tu%32 != 0 {
-		println("typ = ", unsafe.Pointer(typ), " typeBase = ", unsafe.Pointer(typeBase), " index = ", offset)
+		// TODO: debug - to remove
 		throw("Index overflow or tu not a multiple of 32")
 	}
 
 	if typAssigns[offset] != 0 {
 		return typAssigns[offset]
 	}
-	// WE WOULD EXHAUST THE HEAP BEFORE THE COUNTER WRAPS AROUND..
+	// we would exhaust the heap before the counter wraps around
 	count := atomic.Xadd64(&typProf[offset], 1)
 	if count == 1 {
 		sizeclassMap[offset] = sizeclass
@@ -1085,35 +1067,5 @@ func typeIndex(typ *_type, sizeclass uint8) int {
 		// offset is non-zero before acting on it.
 		typMap[num-1] = typ
 	}
-
 	return 0
-}
-
-func PrintSpan(addr unsafe.Pointer) {
-	s := spanOf(uintptr(addr))
-	endAddr := s.base() + (s.nelems * s.elemsize)
-
-	for addr := s.base(); addr < endAddr; addr += 32 {
-		hbits := heapBitsForAddr(addr)
-		byt := (*byte)(unsafe.Pointer(hbits.bitp))
-		print(" ", *byt)
-	}
-
-	println(" ")
-}
-
-// end is 1 past the actual end
-func PrintHeapBits(start, end uintptr) {
-	numAllocBytes := (end - start)
-	numHeapBits := (numAllocBytes + 3) / 4
-	numHeapBytes := (numHeapBits + 7) / 8
-
-	addr := start
-	for i := uintptr(0); i < numHeapBytes; i++ {
-		hbits := heapBitsForAddr(addr)
-		byt := (*byte)(unsafe.Pointer(hbits.bitp))
-		println(i, " : ", (*byt&(1<<7))>>7, " ", (*byt&(1<<6))>>6, " ", (*byt&(1<<5))>>5, " ",
-			(*byt&(1<<4))>>4, " ", (*byt&(1<<3))>>3, " ", (*byt&(1<<2))>>2, " ", (*byt&(1<<1))>>1, " ",
-			(*byt & 1), " ")
-	}
 }
