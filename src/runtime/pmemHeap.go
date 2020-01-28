@@ -258,8 +258,12 @@ type arenaInfo struct {
 	// different than pa.mapAddr if the arena mapping address changed.
 	mapAddr uintptr
 
-	// Used to copy heap type bitmap into
+	// Temporary array to copy heap type bitmap into
 	bitsArray []byte
+
+	// We use heapBitsSetType to set heap type bitmap for spans where we employ
+	// type caching. typ is used to store the type infomation of the cached type
+	typ _type
 }
 
 func mapArenas() error {
@@ -320,11 +324,14 @@ func mapArenas() error {
 
 		// Point the arena header at the actual mapped region
 		parena = (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
-		ar := &arenaInfo{parena, uintptr(mapAddr), make([]byte, 1024)}
-		// We are not freeing up these temporary arrays
+		// arenaInfo struct and the pointers within it are garbage-collected
+		// once this function returns
+		ar := &arenaInfo{pa: parena, mapAddr: uintptr(mapAddr), bitsArray: make([]byte, 1024)}
+
 		// Reconstruct the spans in this arena
+		// Calling arena reconstruct in parallel using goroutines did not give
+		// any significant performance difference.
 		ar.reconstruct()
-		// RECONSTRUCT CAN BE CALLED LIKE OUTSIDE THE LOOP IN A PARALLEL WAY..
 		arenas = append(arenas, ar)
 	}
 
@@ -444,7 +451,10 @@ func (pa *pArena) createSpan(sVal uint32, baseAddr uintptr) *mspan {
 func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool, typIndex int) *mspan {
 	h := &mheap_
 
+	lock(&h.lock)
 	s := (*mspan)(h.spanalloc.alloc())
+	unlock(&h.lock)
+
 	s.init(base, npages)
 	// Initialize other metadata of s
 	s.state = mSpanInUse
@@ -612,86 +622,69 @@ func enableGC(gcp int) {
 // may be contained in one or more volatile arenas. Therefore, this function
 // copies the heap type bits in a per volatile-memory arena manner.
 func (ar *arenaInfo) restoreSpanHeapBits(s *mspan) {
-	parena := (*pArena)(unsafe.Pointer(s.pArena))
 	spanAddr := s.base()
 	spanEnd := spanAddr + (s.npages << pageShift)
-	var tmpHeapBitsAddr uintptr
+	parena := (*pArena)(unsafe.Pointer(s.pArena))
 
-	// CHECK IF BITSARRAY IS SUFFICIENTLY BIG ENOUGH TO STORE HEAP TYPE BITMAP
-	// FOR THIS SPAN
-	if !s.spanclass.noscan() {
-		// 2 bits per 8 bytes
-		numBytesReqd := ((2 * s.elemsize / 8) + 7) / 8
-		if len(ar.bitsArray) < int(numBytesReqd) {
-			ar.bitsArray = make([]byte, numBytesReqd)
-		}
-		tmpHeapBitsAddr = uintptr(unsafe.Pointer(&ar.bitsArray[0]))
-	}
+	if s.typIndex == 0 {
+		// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of
+		// heap total heap type bytes to be copied
+		totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
+		for copied := uintptr(0); copied < totalBytes; {
+			// each iteration copies heap type bits corresponding to the heap
+			// region between 'spanAddr' and 'endAddr'
+			ai := arenaIndex(spanAddr)
+			arenaEnd := arenaBase(ai) + heapArenaBytes
+			endAddr := arenaEnd
+			// Since a span can span across two arenas, the end adress to be
+			// used to copy the heap type bits is the minimium of the span end
+			// address and the arena end address.
+			if spanEnd < endAddr {
+				endAddr = spanEnd
+			}
 
-	// DISTINGUISH BETWEEN TWO CASES -- PMAKE ALLOCATIONS AND PNEW ALLOCATIONS
-	// MAYBE COULD BE DISTINGUISHED USING DATASIZE AND SIZE PARAMETERS
-	// IT COULD ALSO BE JUST LOGGED SOMEWHERE IN THE SPAN
+			numSpanBytes := (endAddr - spanAddr)
+			srcAddr := pmemHeapBitsAddr(spanAddr, parena)
+			dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
+			memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
 
-	if s.typIndex != 0 {
-		tAU := uintptr(pmemHeapBitsAddr(spanAddr, parena))
-		var gTyp _type // CHECK IF THIS CAUSES MALLOC WHICH MAY CAUSE ISSUES
-		// COPY typ kind
-		kindAddr := (*uint8)(unsafe.Pointer(tAU + intSize))
-		gTyp.kind = *kindAddr
-		//println("")
-		sizeAddr := (*uintptr)(unsafe.Pointer(tAU + 16))
-		gTyp.size = *sizeAddr
-		gTyp.size = s.elemsize
-
-		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
-		gTyp.ptrdata = *ptrAddr
-
-		gcDataAddr := unsafe.Pointer(tAU + 32)
-		gTyp.gcdata = (*byte)(gcDataAddr)
-
-		numHeapTypeBits := (gTyp.ptrdata + 7) / 8
-		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
-
-		var ptrByteAddr *byte
-		ptrByteAddr = gTyp.gcdata
-		for i := uintptr(0); i < numHeapTypeBytes; i++ {
-			ptrByteAddr = addb(ptrByteAddr, 1)
-		}
-
-		// totSize := s.elemsize * s.nelems
-		// heapBitsSetType(spanAddr, totSize, totSize, &gTyp, false)
-
-		startAddr := s.base()
-		for k := uintptr(0); k < s.nelems; k++ {
-			heapBitsSetType(startAddr, s.elemsize, gTyp.size, &gTyp, tmpHeapBitsAddr)
-			startAddr += s.elemsize
+			copied += (numSpanBytes / bytesPerBitmapByte)
+			spanAddr += numSpanBytes
 		}
 		return
 	}
 
-	// Golang runtime uses 1 byte to record heap type bitmap of 32 bytes of heap
-	// total heap type bytes to be copied
-	totalBytes := (s.npages << pageShift) / bytesPerBitmapByte
-	for copied := uintptr(0); copied < totalBytes; {
-		// each iteration copies heap type bits corresponding to the heap region
-		// between 'spanAddr' and 'endAddr'
-		ai := arenaIndex(spanAddr)
-		arenaEnd := arenaBase(ai) + heapArenaBytes
-		endAddr := arenaEnd
-		// Since a span can span across two arenas, the end adress to be used to
-		// copy the heap type bits is the minimium of the span end address and
-		// the arena end address.
-		if spanEnd < endAddr {
-			endAddr = spanEnd
-		}
+	// We create a temporary byte array per arenaInfo structure to temporarily
+	// copy the heap type bitmap in heapBitsSetType(). If the temp buffer is not
+	// large enough to hold the heap bits, create a larger buffer here.
+	// 2 bits per 8 bytes
+	numBytesReqd := ((2 * s.elemsize / 8) + 7) / 8
+	if len(ar.bitsArray) < int(numBytesReqd) {
+		ar.bitsArray = make([]byte, numBytesReqd)
+	}
 
-		numSpanBytes := (endAddr - spanAddr)
-		srcAddr := pmemHeapBitsAddr(spanAddr, parena)
-		dstAddr := unsafe.Pointer(heapBitsForAddr(spanAddr).bitp)
-		memmove(dstAddr, srcAddr, numSpanBytes/bytesPerBitmapByte)
+	addr := uintptr(pmemHeapBitsAddr(spanAddr, parena))
+	kindAddr := (*uint8)(unsafe.Pointer(addr + intSize))
+	ar.typ.kind = *kindAddr
 
-		copied += (numSpanBytes / bytesPerBitmapByte)
-		spanAddr += numSpanBytes
+	sizeAddr := (*uintptr)(unsafe.Pointer(addr + 16))
+	ar.typ.size = *sizeAddr
+
+	ptrAddr := (*uintptr)(unsafe.Pointer(addr + 24))
+	ar.typ.ptrdata = *ptrAddr
+
+	gcDataAddr := unsafe.Pointer(addr + 32)
+	// TODO (jerrin) : gcData is in pmem; should a volatile copy be made?
+	ar.typ.gcdata = (*byte)(gcDataAddr)
+
+	// If nelems is greater than 1, it implies this span contains array elements
+	nelems := s.elemsize / ar.typ.size
+
+	startAddr := s.base()
+	for k := uintptr(0); k < s.nelems; k++ {
+		tmpHeapBitsAddr := uintptr(unsafe.Pointer(&ar.bitsArray[0]))
+		heapBitsSetType(startAddr, s.elemsize, nelems*ar.typ.size, &ar.typ, tmpHeapBitsAddr)
+		startAddr += s.elemsize
 	}
 }
 
@@ -971,19 +964,15 @@ func SwizzlePointer(ptr uintptr) uintptr {
 	return uintptr(int(ptr) + off)
 }
 
-var typAssigns [50000]int
-
-var typProf [50000]uint64
-var prevAllocs [50000]uint64
-
+var typeBase uintptr // used to compute typ offset
+var numTypToCheck uint64
 var numAssigned int
 
-var typeBase uintptr // used to compute typ offset
-
 var typMap [50000]*_type
+var typProf [50000]uint64
+var typAssigns [50000]int
+var prevAllocs [50000]uint64
 var sizeclassMap [50000]uint8
-
-var numTypToCheck uint64
 
 func init() {
 	numAssigned = 1
@@ -1016,11 +1005,12 @@ func typAllocThread() {
 			}
 			if off != 0 && typAssigns[off] == 0 {
 				sz := sizeclassMap[off]
+				// TODO jerrin : this threshold is not great
 				threshAllocs := uint64(class_to_objects[sz])
 				currAllocs := typProf[off]
 				if currAllocs > threshAllocs {
 					freq := (typProf[off] - prevAllocs[off])
-					if freq > 100 { // TODO - CHANGE FREQ PER SECOND
+					if freq > 100 { // TODO jerrin : change allocation threshold freq
 						numAssigned++
 						typAssigns[off] = numAssigned
 						// store the mapping persistently

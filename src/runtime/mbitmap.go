@@ -943,7 +943,7 @@ func (s *mspan) countAlloc() int {
 // that is to be used to store heap type bits temporarily if this span spans
 // multiple arenas
 func heapBitsSetType(x, size, dataSize uintptr, typ *_type, metadata uintptr) {
-	shouldLog := metadata & 1 == 1
+	shouldLog := metadata&1 == 1
 	tmpHeapBitsAddr := (metadata >> 1) << 1 // Clear the last bit
 
 	// startAddr and endAddr indicates the heap type bitmap address range that must
@@ -1460,8 +1460,12 @@ Phase4:
 			// Set up hbitp so doubleCheck code below can check it.
 			hbitp = h.bitp
 		}
-		// Zero the object where we wrote the bitmap.
-		memclrNoHeapPointers(unsafe.Pointer(tmpHeapBitsAddr), uintptr(unsafe.Pointer(src))-tmpHeapBitsAddr)
+		// Zero the object where we wrote the bitmap. Zeroing is not necessary
+		// in the heap recovery code-path as we use a separate temporary buffer
+		// to store the heap type bitmap
+		if tmpHeapBitsAddr == x {
+			memclrNoHeapPointers(unsafe.Pointer(tmpHeapBitsAddr), uintptr(unsafe.Pointer(src))-tmpHeapBitsAddr)
+		}
 	}
 
 	// Double check the whole bitmap.

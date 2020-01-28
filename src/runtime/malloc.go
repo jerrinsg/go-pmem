@@ -951,8 +951,10 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 				sizeclass = size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]
 			}
 			size = uintptr(class_to_size[sizeclass])
-			// ARRAYS NOT SUPPORTED FOR NOW BUT CAN BE EASILY EXTENDED
-			if memtype == isPersistent && noscan == false && typ.size == dataSize {
+
+			if memtype == isPersistent && noscan == false {
+				// TODO: while accounting number of allocations of a type, how
+				// many should an array allocation of x elements contribute?
 				typInd = typeIndex(typ, sizeclass)
 			}
 			spc := makeSpanClass(sizeclass, noscan)
