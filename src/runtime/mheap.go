@@ -1302,7 +1302,6 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 			// global persistent memory header as well, so leave space for that
 			offset = pmemHeaderSize
 		}
-
 		arenaPtr = (*pArena)(unsafe.Pointer(uintptr(v) + offset))
 		arenaPtr.size = size
 		arenaPtr.mapAddr = uintptr(v)
