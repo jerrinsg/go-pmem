@@ -77,8 +77,20 @@ func (f *fixalloc) alloc() unsafe.Pointer {
 		return v
 	}
 	if uintptr(f.nchunk) < f.size {
-		f.chunk = uintptr(persistentalloc(_FixAllocChunk, 0, f.stat))
-		f.nchunk = _FixAllocChunk
+		allocationSize := uintptr(_FixAllocChunk)
+		if f.size > allocationSize {
+			// compute next power of 2 greater than f.size
+			nextPow := f.size - 1
+			nextPow |= nextPow >> 1
+			nextPow |= nextPow >> 2
+			nextPow |= nextPow >> 4
+			nextPow |= nextPow >> 8
+			nextPow |= nextPow >> 16
+			nextPow++
+			allocationSize = nextPow
+		}
+		f.chunk = uintptr(persistentalloc(allocationSize, 0, f.stat))
+		f.nchunk = uint32(allocationSize)
 	}
 
 	v := unsafe.Pointer(f.chunk)

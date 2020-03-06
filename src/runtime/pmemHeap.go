@@ -502,13 +502,13 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 	if large {
 		// TODO jerrin
 		//h.free[isPersistent].insert(s)
-		c := &mheap_.central[isPersistent][spc].mcentral
+		c := &mheap_.central[isPersistent][spc][s.typIndex].mcentral
 		c.fullSwept(sg).push(s)
 	} else {
 		// In-use and empty (no free objects) small spans are stored in the empty
 		// list in mcentral. Since the span is empty, it will not be cached in
 		// mcache.
-		c := &mheap_.central[isPersistent][spc].mcentral
+		c := &mheap_.central[isPersistent][spc][0].mcentral
 		//lock(&c.lock)
 		//c.empty.insertBack(s)
 		c.fullSwept(sg).push(s)

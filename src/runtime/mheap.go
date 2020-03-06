@@ -207,7 +207,7 @@ type mheap struct {
 	// central is indexed by spanClass.
 	// central[0] stores the central free lists for volatile memory and
 	// central[1] stores the central free lists for persistent memory.
-	central [maxMemTypes][numSpanClasses]struct {
+	central [maxMemTypes][numSpanClasses][maxCacheTypes]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}
@@ -470,6 +470,9 @@ type mspan struct {
 	speciallock mutex         // guards specials list
 	specials    *special      // linked list of special records sorted by offset.
 	memtype     int           // the type of memory that this span represents (persistent/volatile)
+	// If this span is specially cached to serve allocations for a particular
+	// datatype, then typIndex stores the index of the type in pmemHeader.typeMap
+	typIndex int
 }
 
 func (s *mspan) base() uintptr {
@@ -721,8 +724,14 @@ func (h *mheap) init() {
 
 	// h->mapcache needs no init
 	for _, memtype := range memTypes {
+		maxTypIndex := 1
+		if memtype == isPersistent {
+			maxTypIndex = maxCacheTypes
+		}
 		for i := range h.central[memtype] {
-			h.central[memtype][i].mcentral.init(spanClass(i))
+			for k := 0; k < maxTypIndex; k++ {
+				h.central[memtype][i][k].mcentral.init(spanClass(i))
+			}
 		}
 		h.pages[memtype].init(&h.lock, &memstats.gc_sys)
 	}
@@ -1571,6 +1580,7 @@ func (span *mspan) init(base uintptr, npages uintptr) {
 	span.freeindex = 0
 	span.allocBits = nil
 	span.gcmarkBits = nil
+	span.typIndex = 0
 	span.state.set(mSpanDead)
 	lockInit(&span.speciallock, lockRankMspanSpecial)
 }

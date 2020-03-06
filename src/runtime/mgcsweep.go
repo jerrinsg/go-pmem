@@ -95,21 +95,27 @@ func (s sweepClass) split() (spc spanClass, full bool) {
 // Returns nil if no such span exists.
 func (h *mheap) nextSpanForSweep(memtype int) *mspan {
 	sg := h.sweepgen
+	maxInd := 1
+	if memtype == isPersistent {
+		maxInd = maxCacheTypes
+	}
 	for sc := sweep.centralIndex[memtype].load(); sc < numSweepClasses; sc++ {
 		spc, full := sc.split()
 		// jerrin TODO XXX
-		c := &h.central[memtype][spc].mcentral
-		var s *mspan
-		if full {
-			s = c.fullUnswept(sg).pop()
-		} else {
-			s = c.partialUnswept(sg).pop()
-		}
-		if s != nil {
-			// Write down that we found something so future sweepers
-			// can start from here.
-			sweep.centralIndex[memtype].update(sc)
-			return s
+		for k := 0; k < maxInd; k++ {
+			c := &h.central[memtype][spc][k].mcentral
+			var s *mspan
+			if full {
+				s = c.fullUnswept(sg).pop()
+			} else {
+				s = c.partialUnswept(sg).pop()
+			}
+			if s != nil {
+				// Write down that we found something so future sweepers
+				// can start from here.
+				sweep.centralIndex[memtype].update(sc)
+				return s
+			}
 		}
 	}
 	// Write down that we found nothing.
@@ -139,10 +145,17 @@ func finishsweep_m() {
 	// soon as possible.
 	sg := mheap_.sweepgen
 	for _, memtype := range memTypes {
+		// jerrin TODO check this
 		for i := range mheap_.central[memtype] {
-			c := &mheap_.central[memtype][i].mcentral
-			c.partialUnswept(sg).reset()
-			c.fullUnswept(sg).reset()
+			maxInd := 1
+			if memtype == isPersistent {
+				maxInd = maxCacheTypes
+			}
+			for k := 0; k < maxInd; k++ {
+				c := &mheap_.central[memtype][i][k].mcentral
+				c.partialUnswept(sg).reset()
+				c.fullUnswept(sg).reset()
+			}
 		}
 	}
 
@@ -578,9 +591,9 @@ func (s *mspan) sweep(preserve bool) bool {
 			}
 			// Return span back to the right mcentral list.
 			if uintptr(nalloc) == s.nelems {
-				mheap_.central[s.memtype][spc].mcentral.fullSwept(sweepgen).push(s)
+				mheap_.central[s.memtype][spc][s.typIndex].mcentral.fullSwept(sweepgen).push(s)
 			} else {
-				mheap_.central[s.memtype][spc].mcentral.partialSwept(sweepgen).push(s)
+				mheap_.central[s.memtype][spc][s.typIndex].mcentral.partialSwept(sweepgen).push(s)
 			}
 		}
 	} else if !preserve {
@@ -614,7 +627,7 @@ func (s *mspan) sweep(preserve bool) bool {
 		}
 
 		// Add a large span directly onto the full+swept list.
-		mheap_.central[s.memtype][spc].mcentral.fullSwept(sweepgen).push(s)
+		mheap_.central[s.memtype][spc][s.typIndex].mcentral.fullSwept(sweepgen).push(s)
 	}
 	return false
 }

@@ -43,7 +43,7 @@ type mcache struct {
 
 	// alloc[0] is the cache of spans for volatile memory and alloc[1] is the
 	// cache of spans for persistent memory.
-	alloc [maxMemTypes][numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
+	alloc [maxMemTypes][numSpanClasses][maxCacheTypes]*mspan // spans to allocate from, indexed by spanClass
 
 	stackcache [_NumStackOrders]stackfreelist
 
@@ -98,7 +98,13 @@ func allocmcache() *mcache {
 	})
 	for _, memtype := range memTypes {
 		for i := range c.alloc[memtype] {
-			c.alloc[memtype][i] = &emptymspan // clear span entry in mcache
+			maxInd := 1
+			if memtype == isPersistent {
+				maxInd = maxCacheTypes
+			}
+			for k := 0; k < maxInd; k++ {
+				c.alloc[memtype][i][k] = &emptymspan // clear span entry in mcache
+			}
 		}
 	}
 	c.next_sample = nextSample()
@@ -127,11 +133,16 @@ func freemcache(c *mcache) {
 //
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
-// The memtype parameter indicates whether the function should return
-// a span from persistent memory or volatile memory.
-func (c *mcache) refill(spc spanClass, memtype int) {
+// The metadata parameter holds two pieces of information - bit 0 indicates if
+// memory requested is for persistent memory or volatile memory. The rest of the
+// bits contains the type index if this request is for allocation from a span
+// that is specially cached for a particular datatype.
+func (c *mcache) refill(spc spanClass, metadata int) {
+	memtype := metadata & 1
+	typIndex := metadata >> 1
+
 	// Return the current cached span to the central lists.
-	s := c.alloc[memtype][spc]
+	s := c.alloc[memtype][spc][typIndex]
 
 	if uintptr(s.allocCount) != s.nelems {
 		throw("refill of span with free space remaining")
@@ -141,11 +152,11 @@ func (c *mcache) refill(spc spanClass, memtype int) {
 		if s.sweepgen != mheap_.sweepgen+3 {
 			throw("bad sweepgen in refill")
 		}
-		mheap_.central[memtype][spc].mcentral.uncacheSpan(s)
+		mheap_.central[memtype][spc][typIndex].mcentral.uncacheSpan(s)
 	}
 
 	// Get a new cached span from the central lists.
-	s = mheap_.central[memtype][spc].mcentral.cacheSpan(memtype)
+	s = mheap_.central[memtype][spc][typIndex].mcentral.cacheSpan(memtype)
 	if s == nil {
 		throw("out of memory")
 	}
@@ -161,16 +172,22 @@ func (c *mcache) refill(spc spanClass, memtype int) {
 		throw("refill: got invalid span")
 	}
 
-	c.alloc[memtype][spc] = s
+	c.alloc[memtype][spc][typIndex] = s
 }
 
 func (c *mcache) releaseAll() {
 	for _, memtype := range memTypes {
 		for i := range c.alloc[memtype] {
-			s := c.alloc[memtype][i]
-			if s != &emptymspan {
-				mheap_.central[memtype][i].mcentral.uncacheSpan(s)
-				c.alloc[memtype][i] = &emptymspan
+			maxInd := 1
+			if memtype == isPersistent {
+				maxInd = maxCacheTypes
+			}
+			for k := 0; k < maxInd; k++ {
+				s := c.alloc[memtype][i][k]
+				if s != &emptymspan {
+					mheap_.central[memtype][i][k].mcentral.uncacheSpan(s)
+					c.alloc[memtype][i][k] = &emptymspan
+				}
 			}
 		}
 		// Clear tinyalloc pool.

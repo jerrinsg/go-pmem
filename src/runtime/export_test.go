@@ -236,7 +236,7 @@ func BenchSetType(n int, x interface{}) {
 	allocSize := roundupsize(size)
 	systemstack(func() {
 		for i := 0; i < n; i++ {
-			heapBitsSetType(uintptr(p), allocSize, size, t, false)
+			heapBitsSetType(uintptr(p), allocSize, size, t, 0)
 		}
 	})
 }
