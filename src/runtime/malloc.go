@@ -800,10 +800,14 @@ func nextFreeFast(s *mspan) gclinkptr {
 //
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
-// The memtype parameter indicates if the allocation request is for persistent memory
-// or volatile memory
-func (c *mcache) nextFree(spc spanClass, memtype int) (v gclinkptr, s *mspan, shouldhelpgc bool) {
-	s = c.alloc[memtype][spc]
+// The metadata parameter holds two information - the last bit is the memory
+// type that specifies if the allocation request is for persistent memory
+// or volatile memory. The rest of the bits contain the type index which is used
+// to request a span that is specially cached for the corresponding datatype.
+func (c *mcache) nextFree(spc spanClass, metadata int) (v gclinkptr, s *mspan, shouldhelpgc bool) {
+	typeInd := metadata >> 1
+	memtype := metadata & 1
+	s = c.alloc[memtype][spc][typeInd]
 	shouldhelpgc = false
 	freeIndex := s.nextFreeIndex()
 	if freeIndex == s.nelems {
@@ -812,9 +816,9 @@ func (c *mcache) nextFree(spc spanClass, memtype int) (v gclinkptr, s *mspan, sh
 			println("runtime: s.allocCount=", s.allocCount, "s.nelems=", s.nelems)
 			throw("s.allocCount != s.nelems && freeIndex == s.nelems")
 		}
-		c.refill(spc, memtype)
+		c.refill(spc, metadata)
 		shouldhelpgc = true
-		s = c.alloc[memtype][spc]
+		s = c.alloc[memtype][spc][typeInd]
 
 		freeIndex = s.nextFreeIndex()
 	}
@@ -908,6 +912,8 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.kind&kindNoPointers != 0
 
+	typInd := 0
+
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
 			// Tiny allocator.
@@ -958,10 +964,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 				return x
 			}
 			// Allocate a new maxTinySize block.
-			span = c.alloc[memtype][tinySpanClass]
+			span = c.alloc[memtype][tinySpanClass][typInd]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, span, shouldhelpgc = c.nextFree(tinySpanClass, memtype)
+				metadata := typInd<<1 | memtype
+				v, span, shouldhelpgc = c.nextFree(tinySpanClass, metadata)
 				newSpan = true
 			}
 			x = unsafe.Pointer(v)
@@ -983,20 +990,23 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			}
 			size = uintptr(class_to_size[sizeclass])
 			spc := makeSpanClass(sizeclass, noscan)
-			span = c.alloc[memtype][spc]
+			span = c.alloc[memtype][spc][typInd]
 			v := nextFreeFast(span)
 			if v == 0 {
-				v, span, shouldhelpgc = c.nextFree(spc, memtype)
+				metadata := typInd<<1 | memtype
+				v, span, shouldhelpgc = c.nextFree(spc, metadata)
 				newSpan = true
 			}
 			x = unsafe.Pointer(v)
 			if needzero && span.needzero != 0 {
 				memclrNoHeapPointers(unsafe.Pointer(v), size)
+				// TODO: persist this memclr
 			}
 		}
 	} else {
 		shouldhelpgc = true
 		systemstack(func() {
+			// TODO: there might be a memclr inside this code path
 			span = largeAlloc(size, needzero, noscan, memtype)
 		})
 		span.freeindex = 1
@@ -1006,17 +1016,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		newSpan = true
 	}
 
+	span.typIndex = typInd
 	if newSpan && memtype == isPersistent {
 		logSpanAlloc(span)
-		if noscan {
-			// This is a noscan (no pointer in object) object allocation request.
-			// We do not clear heap type bits on each noscan object allocation
-			// request. Instead, when a new span is allocated to satisfy the
-			// noscan allocation request, we clear the heap type bits for the
-			// whole span.
-			sz := span.npages << pageShift // compute total span size
-			clearHeapBits(span.base(), sz)
-		}
 	}
 
 	var scanSize uintptr
@@ -1030,7 +1032,19 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		if typ == deferType {
 			dataSize = unsafe.Sizeof(_defer{})
 		}
-		heapBitsSetType(uintptr(x), size, dataSize, typ, memtype == isPersistent)
+
+		metadata := uintptr(x)
+		shouldLog := (newSpan || typInd == 0) && memtype == isPersistent
+		if shouldLog {
+			// This is a scan allocation (allocated object has a pointer within
+			// it). So, allocation size is at least 8 bytes. The allocation size
+			// rounded up to the next malloc sizeclass will be an even number
+			// and hence have its last bit unset. We use this last bit of the
+			// allocated address to indicate if heap type bits should be logged.
+			// The last bit
+			metadata |= 1
+		}
+		heapBitsSetType(uintptr(x), size, dataSize, typ, metadata)
 		if dataSize > typ.size {
 			// Array allocation. If there are any
 			// pointers, GC has to scan to the last
@@ -1042,6 +1056,12 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			scanSize = typ.ptrdata
 		}
 		c.local_scan += scanSize
+	} else if newSpan && memtype == isPersistent {
+		// Minor optimization: logSpanAlloc only calls a FlushRange(). If
+		// heap bits are logged for this span, then heapBitsSetType() will call
+		// a memory fence to ensure persistent memory writes are persisted.
+		// Otherwise explicitly call a memory fence function here.
+		Fence()
 	}
 
 	// Ensure that the stores above that initialize x to

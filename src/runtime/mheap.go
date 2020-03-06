@@ -186,7 +186,7 @@ type mheap struct {
 	// central is indexed by spanClass.
 	// central[0] stores the central free lists for volatile memory and
 	// central[1] stores the central free lists for persistent memory.
-	central [maxMemTypes][numSpanClasses]struct {
+	central [maxMemTypes][numSpanClasses][maxCacheTypes]struct {
 		mcentral mcentral
 		pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
 	}
@@ -407,7 +407,10 @@ type mspan struct {
 	specials    *special   // linked list of special records sorted by offset.
 	memtype     int        // the type of memory that this span represents (persistent/volatile)
 
-	pArena uintptr // the pointer to the persistent memory arena header
+	// If this span is specially cached to serve allocations for a particular
+	// datatype, then typIndex stores the index of the type in pmemHeader.typeMap
+	typIndex int
+	pArena   uintptr // the pointer to the persistent memory arena header
 }
 
 func (s *mspan) base() uintptr {
@@ -813,8 +816,14 @@ func (h *mheap) init() {
 
 	// h->mapcache needs no init
 	for _, memtype := range memTypes {
+		maxTypIndex := 1
+		if memtype == isPersistent {
+			maxTypIndex = maxCacheTypes
+		}
 		for i := range h.central[memtype] {
-			h.central[memtype][i].mcentral.init(spanClass(i))
+			for k := 0; k < maxTypIndex; k++ {
+				h.central[memtype][i][k].mcentral.init(spanClass(i))
+			}
 		}
 	}
 }
@@ -1548,6 +1557,7 @@ func (span *mspan) init(base uintptr, npages uintptr) {
 	// Initialize the span memory type as volatile memory. This will be changed
 	// explicitly if the span is to be used for persistent memory.
 	span.memtype = isNotPersistent
+	span.typIndex = 0
 }
 
 func (span *mspan) inList() bool {
