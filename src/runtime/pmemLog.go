@@ -238,3 +238,53 @@ func (pa *pArena) commitLog() {
 	pa.numLogEntries = 0
 	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
 }
+
+// CollectPtrs collects pointers found within the 'objPtr' object and adds them
+// to the ptrArray slice.
+func CollectPtrs(objPtr uintptr, objSize int, ptrArray []unsafe.Pointer) []unsafe.Pointer {
+	s := spanOfUnchecked(objPtr)
+	h := heapBitsForAddr(objPtr)
+	if s.spanclass.noscan() {
+		// This is a noscan span, so there no pointers within it
+		return ptrArray
+	}
+
+	// h.morePointers() shouldn't be called on the second word of an object.
+	// Hence handle the first and second word separately below.
+	if h.isPointer() { // First 8 bytes
+		ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+	}
+	if !h.morePointers() {
+		return ptrArray
+	}
+	objSize -= 8
+	if objSize == 0 {
+		return ptrArray
+	}
+	objPtr += 8
+	h = h.next()
+
+	if h.isPointer() { // Second 8 bytes
+		ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+	}
+
+	// Rest of the objects
+	for {
+		objSize -= 8
+		if objSize == 0 {
+			break
+		}
+
+		objPtr += 8
+		h = h.next()
+		if h.isPointer() {
+			ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+		}
+
+		if !h.morePointers() {
+			break
+		}
+	}
+
+	return ptrArray
+}
