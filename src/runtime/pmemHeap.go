@@ -38,6 +38,11 @@ const (
 	// and volatile memory.
 	maxMemTypes = 2
 
+	// The number of types that we want to cache separately in the mcache
+	// (including slices which is always cached at index 1). If a type is not
+	// specially cached, it occupies slot 0.
+	maxCacheTypes = 51
+
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
 
@@ -76,6 +81,16 @@ type pHeader struct {
 	// If pointers are currently being swizzled, swizzleState captures the current
 	// swizzling state.
 	swizzleState int
+
+	// Up to maxCacheTypes types are cached separately in the persistent memory
+	// mcache to minimize the amount of metadata that we log during each
+	// allocation. typeMap is used to persistently store the relationship
+	// between a cached type and its index within the cache.
+	// typeMap[i] stores the pointer to the type (in RODATA section) cached at
+	// index i. In mcache, index 1 is always used to allocate slices, and index
+	// 0 is used for types which are not cached, so we need to persist the
+	// mapping only for maxCacheTypes - 2 number of entries.
+	typeMap [maxCacheTypes - 2]uintptr
 }
 
 // Strucutre of a persistent memory arena header
@@ -853,4 +868,142 @@ func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr 
 
 	off := offsetTable[ind]
 	return uintptr(int(ptr) + off)
+}
+
+// The following variables and functions are used for type profiling and
+// type promotion to promote a type to be specially cached in mcache.
+
+var (
+	// A fixed base used to compute offset of the _type structure in the binary
+	// RODATA section.
+	typeBase uintptr
+
+	// typeIndex() uses numTypToCheck to communicate with typeProfileThread()
+	// about how many types should it profile.
+	numTypToCheck uint64
+
+	// numAssigned is used to track how many types have been specially cached
+	// so far
+	numAssigned int
+
+	// Mapping between index assigned by typeIndex() and the type pointer
+	typMap [100]*_type
+
+	// Array used to capture number of persistent memory allocation of each
+	// data type
+	typProf [50000]uint64
+
+	// prevAllocs is used for computing the allocation frequency of a type
+	prevAllocs [50000]uint64
+
+	// We support specially caching up to maxCacheTypes number of types. If a
+	// type has been specially promoted, typAssigns maps that type to its index
+	// within the mcache.
+	typAssigns [50000]int
+
+	// One heuristic used for type promotion is the total number of objects
+	// allocated of that type. sizeclassMap helps figure out the target number
+	// of allocations before a type will be considered to be
+	sizeclassMap [50000]uint8
+)
+
+const (
+	sleepInterval = 100000000 // 100 milliseconds
+)
+
+func init() {
+	numAssigned = 1
+	sections, _ := reflect_typelinks()
+	typeBase = uintptr(unsafe.Pointer(sections[0]))
+}
+
+// This thread goes through the type profiling information at a fixed interval
+// and decides when to promote a type to be specially cached. The heurisitic
+// used for type promotion is the following - the number of allocations of such
+// an object has exceeded the number of slots available in a span corresponding
+// to this object sizeclass and its allocation frequency is greater than 100
+// objects per second.
+func typeProfileThread() {
+	if numAssigned == maxCacheTypes-1 {
+		// If we are coming from a restart path, all possible space may already
+		// be used for caching types
+		return
+	}
+
+	// TODO
+	// (1) The heuristic used for promoting a type to be cached can be more
+	// detailed such as computing moving average of allocation frequency, giving
+	// more weight to recent allocations and less weight to past allocations.
+	// (2) The allocation frequency used as a target for type promotion is 100
+	// allocations per second. This is a simple metric and requires more fine
+	// tuning.
+	// (3) The threshold number of allocations required for a type to be
+	// considered for special promotion is the number of slots in an mspan
+	// corresponding to the sizeclass of that type. This again is a simple
+	// metric and can be fine-tuned further.
+
+	for {
+		timeSleep(sleepInterval)
+		for i := uint64(0); i < numTypToCheck; i++ {
+			typ := typMap[i]
+			if typ == nil {
+				continue
+			}
+			off := (uintptr(unsafe.Pointer(typ)) - typeBase) / 32
+			if typAssigns[off] == 0 {
+				sz := sizeclassMap[off]
+				threshAllocs := uint64(class_to_objects[sz])
+				currAllocs := typProf[off]
+				if currAllocs > threshAllocs {
+					freq := (typProf[off] - prevAllocs[off])
+					if freq > 100 {
+						numAssigned++
+						typAssigns[off] = numAssigned
+						// store the mapping persistently
+						pmemHeader.typeMap[numAssigned-2] = off
+						PersistRange(unsafe.Pointer(&pmemHeader.typeMap[numAssigned-2]), intSize)
+						typMap[i] = nil
+						if numAssigned == maxCacheTypes-1 {
+							// No more space to cache more type entries
+							return
+						}
+					}
+				}
+				prevAllocs[off] = currAllocs
+			}
+		}
+	}
+}
+
+// Given a type, typeIndex returns the index where that type is specially cached
+// in the mcache. If the type is not yet specially cached, then this function
+// increments the allocation count of this type.
+func typeIndex(typ *_type, sizeclass uint8) int {
+	// Slices are always cached at index 1
+	if typ.kind&kindSlice == kindSlice {
+		return 1
+	}
+
+	tu := uintptr(unsafe.Pointer(typ))
+	offset := (tu - typeBase) / 32
+	if offset >= 50000 || tu%32 != 0 {
+		throw("Index overflow or type address not a multiple of 32")
+	}
+
+	if typAssigns[offset] != 0 {
+		// This type has already been promoted to be specially cached, so just
+		// return the index associated with the type.
+		return typAssigns[offset]
+	}
+
+	// We would exhaust the heap before the counter wraps around
+	count := atomic.Xadd64(&typProf[offset], 1)
+	if count == 1 {
+		sizeclassMap[offset] = sizeclass
+		num := atomic.Xadd64(&numTypToCheck, 1)
+		// The data race here is okay. typAllocThread() will check that the
+		// type is non-nil before acting on it.
+		typMap[num-1] = typ
+	}
+	return 0
 }
