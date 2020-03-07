@@ -975,7 +975,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, metadata uintptr) {
 		}
 		if shouldLog {
 			h := heapBitsForAddr(x)
-			logHeapBits(x, h.bitp, h.bitp)
+			logHeapBits(x, h.bitp, h.bitp, typ)
 		}
 		return
 	}
@@ -1010,7 +1010,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, metadata uintptr) {
 				*h.bitp |= (bitPointer | bitScan | bitPointer<<heapBitsShift) << h.shift
 			}
 			if shouldLog {
-				logHeapBits(x, startAddr, endAddr)
+				logHeapBits(x, startAddr, endAddr, typ)
 			}
 			return
 		}
@@ -1031,7 +1031,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type, metadata uintptr) {
 		*h.bitp &^= (bitPointer | bitScan | ((bitPointer | bitScan) << heapBitsShift)) << h.shift
 		*h.bitp |= uint8(hb << h.shift)
 		if shouldLog {
-			logHeapBits(x, startAddr, endAddr)
+			logHeapBits(x, startAddr, endAddr, typ)
 		}
 		return
 	}
@@ -1392,7 +1392,7 @@ Phase3:
 	}
 
 	if shouldLog {
-		logHeapBits(x, startAddr, endAddr)
+		logHeapBits(x, startAddr, endAddr, typ)
 	}
 
 Phase4:
