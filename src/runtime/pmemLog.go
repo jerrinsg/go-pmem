@@ -20,55 +20,74 @@ const (
 	logEntrySize = unsafe.Sizeof(logEntry{})
 )
 
-// logHeapBits is used to log the heap type bits set by the memory allocator during
-// a persistent memory allocation request.
-// 'addr' is the start address of the allocated region.
-// The heap type bits to be copied from are between addresses 'startByte' and 'endByte'.
-// This type bitmap will be restored during subsequent run of the program
-// and will help GC identify which addresses in the reconstructed persistent memory
-// region has pointers.
-func logHeapBits(addr uintptr, startByte, endByte *byte) {
-	span := spanOf(addr)
+// logHeapBits is used to log the heap type bits set by the memory allocator
+// during a persistent memory allocation request.
+// 'addr' is the start address of the allocated region. The heap type bits to be
+// copied from are between addresses 'startByte' and 'endByte'.
+// This type bitmap will be restored during subsequent run of the program and
+// will help GC identify which addresses in the reconstructed persistent memory
+// region has pointers. The heap type bits logged is different for spans that
+// are cached at index 0 and not used for specific type allocation, and for
+// spans that are specially cached for a particular type allocation. For a
+// specially cached span, logHeapBits logs the type index followed by the
+// metdata from the type datastructure. This is done only for the first object.
+// For other spans, the heap type bits are copied as-is for each objects.
+//
+// Specially cached spans:
+// +------------+---------+---------+---------+-----------+
+// | Type index |   KIND  |   SIZE  | PTRDATA |  GC DATA  |
+// |   8 bytes  | 8 bytes | 8 bytes | 8 bytes | var-sized |
+// +------------+---------+---------+---------+-----------+
+//
+// TODO - type metadata need not be saved for each span. It can instead be
+// stored in the global header.
+func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
+	span := spanOfUnchecked(addr)
 	if span.memtype != isPersistent {
 		throw("Invalid heap type bits logging request")
 	}
 
+	// If this span is used to allocate objects of a particular type then use
+	// an optimized logging approach
+	optLog := span.typIndex != 0
 	ai := arenaIndex(addr)
 	arena := mheap_.arenas[ai.l1()][ai.l2()]
 	pArena := (*pArena)(unsafe.Pointer(arena.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
-	dstAddr := pmemHeapBitsAddr(addr, pArena)
 
-	// From heapBitsSetType():
-	// There can only be one allocation from a given span active at a time,
-	// and the bitmap for a span always falls on byte boundaries,
-	// so there are no write-write races for access to the heap bitmap.
-	// Hence, heapBitsSetType can access the bitmap without atomics.
-	memmove(dstAddr, unsafe.Pointer(startByte), numHeapBytes)
-	PersistRange(dstAddr, numHeapBytes)
-}
+	if optLog {
+		typAddr := (*int)(pmemHeapBitsAddr(span.base(), pArena))
+		// Write the type index (8 bytes) at the beginning of the log followed
+		// by the type metadata - kind, size ptrdata, gcdata (see _type structure
+		// representation in type.go).
+		if *typAddr != span.typIndex {
+			*typAddr = span.typIndex
+		}
 
-// clearHeapBits clears the logged heap type bits for the object allocated at
-// address 'addr' and occupying 'size' bytes.
-// The allocator tries to reuse memory regions if possible to satisfy allocation
-// requests. If the reused regions do not contain pointers, then the heap type
-// bits need to be cleared. This is because for swizzling pointers, the runtime
-// need to be exactly sure what regions are static data and what regions contain
-// pointers.
-// This function expects size to be a multiple of bytesPerBitmapByte.
-func clearHeapBits(addr uintptr, size uintptr) {
-	span := spanOf(addr)
-	if span.memtype != isPersistent {
-		throw("Invalid heap type bits logging request")
+		tu := uintptr(unsafe.Pointer(typAddr))
+		kindAddr := (*uint8)(unsafe.Pointer(tu + intSize))
+		*kindAddr = typ.kind
+		sizeAddr := (*uintptr)(unsafe.Pointer(tu + 16))
+		*sizeAddr = typ.size
+		ptrAddr := (*uintptr)(unsafe.Pointer(tu + 24))
+		*ptrAddr = typ.ptrdata
+
+		// If typ.ptrdata is a multiple of 8, then the below step is not necessary
+		numHeapTypeBits := (typ.ptrdata + 7) / 8
+		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
+		gcDataAddr := unsafe.Pointer(tu + 32)
+		memmove(gcDataAddr, unsafe.Pointer(typ.gcdata), numHeapTypeBytes)
+		PersistRange(unsafe.Pointer(typAddr), numHeapTypeBytes+32)
+	} else {
+		logAddr := pmemHeapBitsAddr(addr, pArena)
+		// From heapBitsSetType()
+		// There can only be one allocation from a given span active at a time,
+		// and the bitmap for a span always falls on byte boundaries,
+		// so there are no write-write races for access to the heap bitmap.
+		// Hence, heapBitsSetType can access the bitmap without atomics.
+		memmove(logAddr, unsafe.Pointer(startByte), numHeapBytes)
+		PersistRange(logAddr, numHeapBytes)
 	}
-
-	ai := arenaIndex(addr)
-	arena := mheap_.arenas[ai.l1()][ai.l2()]
-	pArena := (*pArena)(unsafe.Pointer(arena.pArena))
-	heapBitsAddr := pmemHeapBitsAddr(addr, pArena)
-	numTypeBytes := size / bytesPerBitmapByte
-	memclrNoHeapPointers(heapBitsAddr, numTypeBytes)
-	PersistRange(heapBitsAddr, numTypeBytes)
 }
 
 // pmemHeapBitsAddr returns the address in persistent memory where heap type
@@ -101,34 +120,31 @@ func logSpanAlloc(s *mspan) {
 	// The value that should be logged
 	logVal := spanLogValue(s)
 
-	//bitmapVal := *logAddr
-	// jerrin XXX TODO
-	//if bitmapVal != 0 {
-	// The span bitmap already has an entry corresponding to this span.
-	// We clear the span bitmap when a span is freed. Since the entry still
-	// exists, this means that the span is getting reused. Hence, the first
-	// 31 bits of the entry should match with the corresponding value to be
-	// logged. The last bit need not be the same as needzero bit can change
-	// as spans get reused.
-	// compare the first 31 bits
-	//if bitmapVal>>1 != logVal>>1 {
-	//throw("Logged span information mismatch")
-	//}
-	// compare the last bit
-	//if bitmapVal&1 == logVal&1 {
-	// all bits are equal, need not store the value again
-	//return
-	//}
-	//}
+	// TODO jerrin XXX check if any optimization possible in below code
+	/*
+		bitmapVal := *logAddr
+		if bitmapVal != 0 {
+			// The span bitmap already has an entry corresponding to this span.
+			// We clear the span bitmap when a span is freed. Since the entry still
+			// exists, this means that the span is getting reused. Hence, the first
+			// 30 bits of the entry should match with the corresponding value to be
+			// logged. The last two bits need not be the same as needzero bit or the
+			// optTypeLog bit can change as spans get reused.
+			// compare the first 30 bits
+			if bitmapVal>>2 != logVal>>2 {
+				throw("Logged span information mismatch")
+			}
+			// compare the last two bits
+			if bitmapVal&3 == logVal&3 {
+				// all bits are equal, need not store the value again
+				return
+			}
+		}
+	*/
 
-	if uintptr(unsafe.Pointer(logAddr)) == 0 {
-		println("span base = ", hex(s.base()))
-		println("logging addr = ", unsafe.Pointer(logAddr))
-		println("log value = ", logVal)
-		throw("logging error")
-	}
 	atomic.Store(logAddr, logVal)
-	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
+	// Store fence will be called at the end of mallocgc()
+	FlushRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
 }
 
 // Function to log that a span has been completely freed. This is done by
@@ -146,16 +162,21 @@ func logSpanFree(s *mspan) {
 // A helper function to compute the value that should be logged to record the
 // allocation of span s.
 // For a small span, the value logged is -
-// ((s.spc) << 1 | s.needzero) and for a large span the value logged is -
-// ((67+s.npages-4) << 2 | s.spc << 1 | s.needzero)
-// TODO XXX jerrin should the needzero parameter be always set after reconstruction?
+// (s.spc << 2 | optTypeLog << 1 | s.needzero) and for a large span the value
+// logged is - ((67+s.npages-4) << 3 | s.spc << 2 | optTypeLog << 1 | s.needzero).
+// For a small span, optTypeLog bit indicates that the heap type bits logged for
+// this span is an optimized representation - only the first object in the span
+// has its type bits logged. All other objects in the span have the same type
+// representation.
+// optTypeLog bit is currently unused for a large span.
 func spanLogValue(s *mspan) uint32 {
-	var logVal uintptr
+	logVal := uintptr(0)
 	if s.elemsize > maxSmallSize { // large allocation
 		npages := s.elemsize >> pageShift
-		logVal = (67+npages-4)<<2 | uintptr(s.spanclass)<<1 | uintptr(s.needzero)
+		logVal = (67+npages-4)<<3 | uintptr(s.spanclass)<<2 | uintptr(s.needzero)
 	} else {
-		logVal = uintptr(s.spanclass)<<1 | uintptr(s.needzero)
+		optTypeLog := bool2int(s.typIndex != 0)
+		logVal = uintptr(s.spanclass)<<2 | uintptr(optTypeLog)<<1 | uintptr(s.needzero)
 	}
 	return uint32(logVal)
 }
@@ -186,7 +207,7 @@ func spanLogAddr(s *mspan) *uint32 {
 	return (*uint32)(unsafe.Pointer(logAddr))
 }
 
-// The following functions help implement a minimal undo logging in the runtime
+// The following functions help implement a minimal undo log in the runtime
 // using persistent memory arena header undo buffers.
 // Each arena support storing two data items. Both data items are stored as a
 // signed int value. The only unsigned value logged here is the arena map address

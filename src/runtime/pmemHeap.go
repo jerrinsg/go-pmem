@@ -926,6 +926,11 @@ func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr 
 // The following variables and functions are used for type profiling and
 // type promotion to promote a type to be specially cached in mcache.
 
+// TODO - to store profiling information about a type, we use arrays sized at
+// 50000 entries. The index of a type in this array is computed as the
+// difference between the type pointer and typeBase, divided by 32. This is a
+// quick hack, and can be improved.
+
 var (
 	// A fixed base used to compute offset of the _type structure in the binary
 	// RODATA section.
