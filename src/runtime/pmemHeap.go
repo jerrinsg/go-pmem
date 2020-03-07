@@ -46,10 +46,10 @@ const (
 	// The maximum span class of a small span
 	maxSmallSpanclass = 133
 
-	// The maximum value that will logged in span bitmap corresponding to a small span.
-	// This is when the spanclass of the span is 133 and its needzero parameter
-	// is 1.
-	maxSmallSpanLogVal = (maxSmallSpanclass << 1) + 1
+	// The maximum value that will logged in span bitmap corresponding to a
+	// small span. This is when the spanclass of the span is 133 and its
+	// needzero and optTypeLog bit is 1.
+	maxSmallSpanLogVal = (maxSmallSpanclass << 2) + (1 << 1) + 1
 
 	// The effective permission of the created persistent memory file is
 	// (mode & ~umask) where umask is the system wide umask.
@@ -308,6 +308,8 @@ func mapArenas() error {
 		parena = (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
 		ar := &arenaInfo{parena, uintptr(mapAddr)}
 		// Reconstruct the spans in this arena
+		// Calling arena reconstruct in parallel using goroutines did not give
+		// any significant performance difference.
 		ar.reconstruct()
 		arenas = append(arenas, ar)
 	}
@@ -379,9 +381,12 @@ func (ar *arenaInfo) reconstruct() {
 			unlock(&h.lock)
 			i += npages
 		} else {
-			s := createSpan(sval, addr)
-			s.pArena = (uintptr)(unsafe.Pointer(pa))
-			ar.restoreSpanHeapBits(s)
+			s := pa.createSpan(sval, addr)
+			// The heap type bits need to be restored only if the span is known
+			// to have pointers in it.
+			if !s.spanclass.noscan() {
+				ar.restoreSpanHeapBits(s)
+			}
 			i += s.npages
 		}
 	}
@@ -390,11 +395,11 @@ func (ar *arenaInfo) reconstruct() {
 // createSpan figures out the properties of the span to be reconstructed such as
 // spanclass, number of pages, the needzero value, etc. and calls the core
 // reconstruction function createSpanCore.
-func createSpan(sVal uint32, baseAddr uintptr) *mspan {
+func (pa *pArena) createSpan(sVal uint32, baseAddr uintptr) *mspan {
 	var npages uintptr
 	var spc spanClass
 	large := false
-	needzero := ((sVal & 1) == 1)
+	needzero := (sVal & 1) == 1
 	if sVal > maxSmallSpanLogVal { // large allocation
 		large = true
 		noscan := ((sVal >> 1 & 1) == 1)
@@ -404,7 +409,10 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 		npages = uintptr(class_to_allocnpages[sVal>>2])
 		spc = spanClass(sVal >> 1)
 	}
-	return createSpanCore(spc, baseAddr, npages, large, needzero)
+	s := createSpanCore(spc, baseAddr, npages, large, needzero)
+	s.pArena = (uintptr)(unsafe.Pointer(pa))
+
+	return s
 }
 
 // createSpanCore creates a span corresponding to memory region beginning at
@@ -415,7 +423,10 @@ func createSpan(sVal uint32, baseAddr uintptr) *mspan {
 func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *mspan {
 	h := &mheap_
 
+	lock(&h.lock)
 	s := (*mspan)(h.spanalloc.alloc())
+	unlock(&h.lock)
+
 	s.init(base, npages)
 	// Initialize other metadata of s
 	s.state = mSpanInUse
@@ -615,16 +626,23 @@ type tuple struct {
 	s, e uintptr
 }
 
+var (
+	// TODO move this to a swizzling specific data structure
+	// The offset table stores, for each arena, the delta value by which pointers
+	// that point into this arena should be offset by.
+	offsetTable []int
+
+	// rangeTable stores the address range at which each arena is mapped at.
+	rangeTable []tuple
+)
+
 func swizzleArenas(arenas []*arenaInfo) (err error) {
 	// Channel used to synchronize between goroutines that are used to swizzle
 	// arenas.
 	dc := make(chan bool, len(arenas))
-	// The offset table stores, for each arena, the delta value by which pointers
-	// that point into this arena should be offset by.
-	offsetTable := make([]int, len(arenas))
 
-	// rangeTable stores the address range at which each arena is mapped at.
-	rangeTable := make([]tuple, len(arenas))
+	offsetTable = make([]int, len(arenas))
+	rangeTable = make([]tuple, len(arenas))
 
 	if pmemHeader.swizzleState == swizzleSetup {
 		// There was a swizzle setup operating happening which did not complete.
@@ -655,7 +673,7 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 		// Complete any partially completed swizzling operation
 		for _, ar := range arenas {
-			go ar.swizzle(offsetTable, rangeTable, dc)
+			go ar.swizzle(dc)
 		}
 		// Wait until all goroutines complete swizzling.
 		for range arenas {
@@ -720,7 +738,7 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 	// Swizzle pointers in each arena
 	for _, ar := range arenas {
-		go ar.swizzle(offsetTable, rangeTable, dc)
+		go ar.swizzle(dc)
 	}
 	// Wait until all goroutines complete swizzling.
 	for range arenas {
@@ -786,7 +804,7 @@ func findArenaIndex(x uintptr, rangeTable []tuple) int {
 
 // Swizzle arena pa. skip is the number of bytes in the beginning of the arena
 // that has to be skipped for swizzling.
-func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool) {
+func (ar *arenaInfo) swizzle(dc chan bool) {
 	pa := ar.pa
 	mdata, allocSize := pa.layout()
 
@@ -799,9 +817,9 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 		s := spanOfUnchecked(addr)
 		end := s.base() + (s.npages << pageShift)
 
-		// This span is not in-use. Hence no pointers within the span need to
-		// be swizzled.
-		if s.state != mSpanInUse {
+		// If the span is not in-use or if the span is known to not contain any
+		// pointers, then swizzling can be skipped on this span.
+		if s.state != mSpanInUse || s.spanclass.noscan() {
 			rem := (end - addr)
 			done += rem
 			continue
@@ -841,7 +859,7 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 				if *au == 0 {
 					continue
 				}
-				newAddr := swizzlePointer(*au, offsetTable, rangeTable)
+				newAddr := SwizzlePointer(*au)
 				if newAddr == *au {
 					// The swizzled address is the same as the current address.
 					// Skip writing this.
@@ -867,9 +885,8 @@ func (ar *arenaInfo) swizzle(offsetTable []int, rangeTable []tuple, dc chan bool
 	dc <- true
 }
 
-// Given the offset table and the range table, swizzlePointer() computes the
-// swizzled pointer address correspondong to 'ptr'.
-func swizzlePointer(ptr uintptr, offsetTable []int, rangeTable []tuple) uintptr {
+// SwizzlePointer computes the swizzled pointer address corresponding to 'ptr'.
+func SwizzlePointer(ptr uintptr) uintptr {
 	// If findArenaIndex() returns -1, it indicates that 'ptr' is not a
 	// valid persistent memory address. Hence return 0.
 	ind := findArenaIndex(ptr, rangeTable)
