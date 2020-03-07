@@ -59,6 +59,11 @@ const (
 var (
 	memTypes   = []int{isPersistent, isNotPersistent}
 	pmemHeader *pHeader
+	// AppCallBack is used by applications to register a callback function that
+	// is called before pointers are swizzled in the heap recovery path. The
+	// transaction package uses the callback to abort undo log entries before
+	// runtime swizzles pointers.
+	AppCallBack func(unsafe.Pointer)
 )
 
 // The structure of the persistent memory file header region
@@ -706,6 +711,12 @@ func swizzleArenas(arenas []*arenaInfo) (err error) {
 
 	// Set swizzle state as swizzleOngoing
 	pmemHeader.setSwizzleState(swizzleOngoing)
+
+	// Call the application callback function, if one is registered
+	if AppCallBack != nil {
+		newRoot := computeRootAddr(pmemHeader.rootOffset, arenas)
+		AppCallBack(newRoot)
+	}
 
 	// Swizzle pointers in each arena
 	for _, ar := range arenas {
