@@ -237,6 +237,7 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 	}
 	// TODO - Set persistent memory as initialized
 	atomic.Store(&pmemInfo.initState, initDone)
+	go typeProfileThread()
 
 	if !firstInit {
 		// Enable garbage collection

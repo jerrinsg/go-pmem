@@ -1105,6 +1105,13 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 				sizeclass = size_to_class128[divRoundUp(size-smallSizeMax, largeSizeDiv)]
 			}
 			size = uintptr(class_to_size[sizeclass])
+
+			if memtype == isPersistent && noscan == false {
+				// TODO - an array allocation (e.g. pmake([]int, 50)) currently
+				// contributes 1 count while profiling allocations. Should this
+				// instead be made 50?
+				typInd = typeIndex(typ, sizeclass)
+			}
 			spc := makeSpanClass(sizeclass, noscan)
 			span = c.alloc[memtype][spc][typInd]
 			v := nextFreeFast(span)

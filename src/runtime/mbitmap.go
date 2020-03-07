@@ -1417,8 +1417,12 @@ Phase4:
 			// Set up hbitp so doubleCheck code below can check it.
 			hbitp = h.bitp
 		}
-		// Zero the object where we wrote the bitmap.
-		memclrNoHeapPointers(unsafe.Pointer(tmpHeapBitsAddr), uintptr(unsafe.Pointer(src))-tmpHeapBitsAddr)
+		// Zero the object where we wrote the bitmap. Zeroing is not necessary
+		// in the heap recovery code-path as we use a separate temporary buffer
+		// to store the heap type bitmap
+		if tmpHeapBitsAddr == x {
+			memclrNoHeapPointers(unsafe.Pointer(tmpHeapBitsAddr), uintptr(unsafe.Pointer(src))-tmpHeapBitsAddr)
+		}
 	}
 
 	// Double check the whole bitmap.
