@@ -187,6 +187,10 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 				or initialization is ongoing`)
 	}
 
+	// platformInit() checks if the platform supports eADR. If not, the cache
+	// flush instruction is set according to the CPU capabilities.
+	platformInit()
+
 	// Set the persistent memory file name. This will be used to map the file
 	// into memory in growPmemRegion().
 	pmemInfo.fname = fname

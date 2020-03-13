@@ -32,6 +32,10 @@ func flushClwb(addr, len uintptr) {
 	}
 }
 
+func flushEmpty(addr, len uintptr) {
+	// no need to flush CPU caches, typically on platforms supporting eADR
+}
+
 func fenceEmpty() {
 	// nothing to do
 }
@@ -44,6 +48,9 @@ func sfence()
 func clwb(ptr uintptr)
 func clflush(ptr uintptr)
 func clflushopt(ptr uintptr)
+
+//go:noinline
+func compilerBarrier()
 
 // msyncRange() flushes changes made to the in-core copy of a file that was
 // mapped into memory using mmap(2) back to the filesystem.

@@ -16,6 +16,9 @@ TEXT runtime·clwb(SB), $0-8
 	BYTE $0x66; BYTE $0x0F; BYTE $0xAE; BYTE $0x33;
 	RET
 
+TEXT runtime·compilerBarrier(SB),$0
+	RET
+
 TEXT runtime·clflushopt(SB), $0-8
 	MOVQ 	ptr+0(FP), BX
 	// clflushopt BX
