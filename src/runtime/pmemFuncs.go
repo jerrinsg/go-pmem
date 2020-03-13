@@ -16,15 +16,17 @@ var pmemFuncs struct {
 }
 
 // The init function runs even before the main() function of the application is run.
-// This function is used to set the flush and fence functions to be used according
-// to CPU capabilities.
 func init() {
 	// default functions
 	pmemFuncs.flush = flushClflush
 	// clflush does not require a fence, hence set default fence function as an
 	// empty function.
 	pmemFuncs.fence = fenceEmpty
+}
 
+// This function is used to set the flush and fence functions to be used
+// according to CPU/platform capabilities.
+func platformInit() {
 	// overwrite default functions depending on CPU features
 	if isCPUClfushoptPresent() {
 		pmemFuncs.flush = flushClflushopt
@@ -34,6 +36,14 @@ func init() {
 	if isCPUClwbPresent() {
 		pmemFuncs.flush = flushClwb
 		pmemFuncs.fence = memoryBarrier
+	}
+
+	hasEadr := pmemAutoFlush()
+	if hasEadr {
+		// If platform has eADR feature, then CPU caches are part of the
+		// persistence domain
+		pmemFuncs.flush = flushEmpty
+		pmemFuncs.fence = compilerBarrier
 	}
 }
 

@@ -31,3 +31,8 @@ func getFileSize(fname string) (size int) {
 	throw("Not implemented")
 	return
 }
+
+func platformInit() {
+	throw("Not implemented")
+	return
+}
