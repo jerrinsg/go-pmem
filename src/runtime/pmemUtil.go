@@ -176,6 +176,7 @@ func utilDevDaxSize(fd int32) int {
 
 	n := read(sFd, unsafe.Pointer(&pathBuf[0]), PATH_MAX)
 	sz := bytesToInt(pathBuf[:n])
+	closefd(sFd)
 	return sz
 }
 
@@ -263,4 +264,57 @@ func bytesToInt(s []byte) int {
 		}
 	}
 	return int(n)
+}
+
+// This function is used to check if the platform supports eADR. This is a
+// simplified implementation of pmem_has_auto_flush() from the PMDK project.
+// It goes through /sys/bus/nd/devices path to find all nvdimm regions, and for
+// each region checks if "persistence_domain" file exists and contains
+// "cpu_cache" string.
+func pmemAutoFlush() bool {
+	ind := byte(48) // "0"
+	hasEadr := false
+	busDevicePath := "/sys/bus/nd/devices/"
+	newLine := []byte("\n")
+	cpuCache := []byte("cpu_cache")
+	for { // iterate through nvdimm region files starting from index 0
+		regionPath := busDevicePath + "region" + string(ind)
+		rb := []byte(regionPath)
+
+		// open /sys/bus/nd/devices/regionX file to check if it exists
+		rfd := open(&rb[0], _O_RDONLY, 0)
+		if rfd < 0 {
+			// This nvdimm region file does not exist
+			break
+		}
+		closefd(rfd) // close file descriptor early to make error handling easy
+
+		pdPath := regionPath + "/persistence_domain"
+		pb := []byte(pdPath)
+		pfd := open(&pb[0], _O_RDONLY, 0)
+		if pfd < 0 {
+			// This nvdimm region does not have a persistence domain file
+			return false
+		}
+		n := read(pfd, unsafe.Pointer(&pathBuf[0]), PATH_MAX)
+		closefd(pfd)
+		if n <= 0 {
+			// Invalid format of the persistence domain file
+			return false
+		}
+
+		if pathBuf[n-1] != newLine[0] {
+			// Invalid format of the persistence domain file
+			return false
+		}
+		if compareBytes(pathBuf[:n-1], cpuCache) {
+			// This nvdimm region has CPU caches in its persistence domain.
+			// Continue check on remaining nvdimm regions, if any.
+			hasEadr = true
+		} else {
+			return false
+		}
+		ind++
+	}
+	return hasEadr
 }
