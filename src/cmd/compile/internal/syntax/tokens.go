@@ -53,12 +53,12 @@ const (
 	_Func        // func
 	_Go          // go
 	_Goto        // goto
-	_Txn         // txn
 	_If          // if
 	_Import      // import
 	_Interface   // interface
 	_Map         // map
 	_Package     // package
+	_Pmemtxn     // pmemtxn
 	_Range       // range
 	_Return      // return
 	_Select      // select

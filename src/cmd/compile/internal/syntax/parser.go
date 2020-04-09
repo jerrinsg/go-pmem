@@ -2178,7 +2178,7 @@ func (p *parser) stmtOrNil() Stmt {
 		p.next()
 		s.Label = p.name()
 		return s
-	case _Txn:
+	case _Pmemtxn:
 		panic("go-pmem parser.stmtorNil() don't know how to handle txn keyword")
 	case _Return:
 		s := new(ReturnStmt)
@@ -2205,7 +2205,7 @@ func (p *parser) stmtList() (l []Stmt) {
 	}
 	firstTxKey := true
 	for p.tok != _EOF && p.tok != _Rbrace && p.tok != _Case && p.tok != _Default {
-		if p.tok == _Txn {
+		if p.tok == _Pmemtxn {
 			if p.mode&GenTxn == 0 {
 				p.syntaxError("txn() call not supported in this build mode, pass -txn while building")
 			}
