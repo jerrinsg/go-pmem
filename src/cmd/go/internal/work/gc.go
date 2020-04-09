@@ -163,7 +163,7 @@ CheckFlags:
 		// except for a small whitelist of commonly used flags.
 		// If the user knows better, they can manually add their own -c to the gcflags.
 		switch flag {
-		case "-N", "-l", "-S", "-B", "-C", "-I":
+		case "-N", "-l", "-S", "-B", "-C", "-I", "-txn":
 			// OK
 		default:
 			canDashC = false
