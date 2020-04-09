@@ -20,13 +20,14 @@ const (
 	logEntrySize = unsafe.Sizeof(logEntry{})
 )
 
-// logHeapBits is used to log the heap type bits set by the memory allocator during
-// a persistent memory allocation request.
-// 'addr' is the start address of the allocated region.
-// The heap type bits to be copied from are between addresses 'startByte' and 'endByte'.
-// This type bitmap will be restored during subsequent run of the program
-// and will help GC identify which addresses in the reconstructed persistent memory
+// logHeapBits is used to log the heap type bits set by the memory allocator
+// during a persistent memory allocation request.
+// 'addr' is the start address of the allocated region. The heap type bits to be
+// copied from are between addresses 'startByte' and 'endByte'.
+// This type bitmap will be restored during subsequent run of the program and
+// will help GC identify which addresses in the reconstructed persistent memory
 // region has pointers.
+// Document the representation here
 func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 	span := spanOfUnchecked(addr)
 	if span.memtype != isPersistent {
@@ -39,35 +40,12 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 	pArena := (*pArena)(unsafe.Pointer(span.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
 
-	if false {
-		println("typ size = ", typ.size, " ptrdata = ", typ.ptrdata)
-		hbT := heapBitsForAddr(addr)
-		println("logHeapBits - numHeapBytes = ", numHeapBytes)
-		println("startByte = ", unsafe.Pointer(startByte), " heapBitsForAddr = ", unsafe.Pointer(hbT.bitp))
-		hbits := startByte
-		for i := uintptr(0); i < numHeapBytes; i++ {
-
-			println(*hbits, " - ", (*hbits&(1<<7))>>7, " ", (*hbits&(1<<6))>>6, " ", (*hbits&(1<<5))>>5, " ",
-				(*hbits&(1<<4))>>4, " ", (*hbits&(1<<3))>>3, " ", (*hbits&(1<<2))>>2, " ",
-				(*hbits&(1<<1))>>1, " ", (*hbits & 1))
-			hbits = addb(hbits, 1)
-		}
-	}
-
-	// RATHER THAN LOG ONCE SHOULD WE AT THIS POINT LOG THE BITS FOR ALL POTENTIAL
-	// OBJECTS SO THAT RECOVERY WOULD JUST BE A MEMCPY
-
 	if optLog {
 		typAddr := (*int)(pmemHeapBitsAddr(span.base(), pArena))
 		// Write the type index (8 bytes) at the beginning of the log followed
 		// by the heap type bits.
 		if *typAddr != span.typIndex {
 			*typAddr = span.typIndex
-		}
-
-		// DEBUG - CAN BE REMOVED
-		if typ.ptrdata%8 != 0 {
-			println("TYP ", typ.string(), " ptrdata size NOT A MULTIPLE OF 8")
 		}
 
 		tAU := uintptr(unsafe.Pointer(typAddr))
@@ -80,24 +58,14 @@ func logHeapBits(addr uintptr, startByte, endByte *byte, typ *_type) {
 
 		ptrAddr := (*uintptr)(unsafe.Pointer(tAU + 24))
 		*ptrAddr = typ.ptrdata
-		//println("TYPE SIZE = ", typ.size, " SPAN SIZE = ", span.elemsize)
 
+		// If typ.ptrdata is a multiple of 8, then the below step is not necessary
 		numHeapTypeBits := (typ.ptrdata + 7) / 8
 		numHeapTypeBytes := (numHeapTypeBits + 7) / 8
 
 		gcDataAddr := unsafe.Pointer(tAU + 32)
 		// memclrNoHeapPointers(gcDataAddr, 16) //  IS THIS REQUIRED?
 		memmove(gcDataAddr, unsafe.Pointer(typ.gcdata), numHeapTypeBytes)
-
-		// print("typIndex = ", *typAddr, " Logging: kind = ", typ.kind, " size = ", typ.size, "ptrdata = ", typ.ptrdata, " heap bits -- ")
-
-		//var ptrByteAddr *byte
-		//ptrByteAddr = (*byte)(gcDataAddr)
-		//for i := uintptr(0); i < numHeapTypeBytes; i++ {
-		// print(*ptrByteAddr, " ")
-		//ptrByteAddr = addb(ptrByteAddr, 1)
-		//}
-		//println("")
 
 		PersistRange(unsafe.Pointer(typAddr), numHeapTypeBytes+32)
 	} else {
@@ -224,7 +192,7 @@ func spanLogAddr(s *mspan) *uint32 {
 	return (*uint32)(unsafe.Pointer(logAddr))
 }
 
-// The following functions help implement a minimal undo logging in the runtime
+// The following functions help implement a minimal undo log in the runtime
 // using persistent memory arena header undo buffers.
 // Each arena support storing two data items. Both data items are stored as a
 // signed int value. The only unsigned value logged here is the arena map address
@@ -291,55 +259,52 @@ func (pa *pArena) commitLog() {
 	PersistRange(unsafe.Pointer(&pa.numLogEntries), intSize)
 }
 
+// LogAddPtrs collects pointers found within the 'objPtr' object and adds them
+// to the ptrArray slice.
 func LogAddPtrs(objPtr uintptr, objSize int, ptrArray []unsafe.Pointer) []unsafe.Pointer {
 	s := spanOfUnchecked(objPtr)
 	h := heapBitsForAddr(objPtr)
 	if s.spanclass.noscan() {
-		// this is a noscan span.. so no pointers within it
-		goto RETURN
+		// This is a noscan span, so there no pointers within it
+		return ptrArray
 	}
 
-	// First 8 bytes
-	if h.isPointer() {
+	// h.morePointers() shouldn't be called on the second word of an object.
+	// Hence handle the first and second word separately below.
+	if h.isPointer() { // First 8 bytes
 		ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
 	}
 	if !h.morePointers() {
-		goto RETURN
+		return ptrArray
 	}
 	objSize -= 8
 	if objSize == 0 {
-		goto RETURN
+		return ptrArray
 	}
 	objPtr += 8
 	h = h.next()
 
-	// Second 8 bytes
-	if h.isPointer() {
+	if h.isPointer() { // Second 8 bytes
 		ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
 	}
-	objSize -= 8
-	if objSize == 0 {
-		goto RETURN
-	}
-	h = h.next()
-	objPtr += 8
 
 	// Rest of the objects
 	for {
-		if h.isPointer() {
-			ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
-		}
-		if !h.morePointers() {
-			goto RETURN
-		}
-
-		objPtr += 8
 		objSize -= 8
 		if objSize == 0 {
 			break
 		}
+
+		objPtr += 8
 		h = h.next()
+		if h.isPointer() {
+			ptrArray = append(ptrArray, unsafe.Pointer(objPtr))
+		}
+
+		if !h.morePointers() {
+			break
+		}
 	}
-RETURN:
+
 	return ptrArray
 }

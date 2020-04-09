@@ -797,16 +797,6 @@ func (c *mcache) nextFree(spc spanClass, metadata int) (v gclinkptr, s *mspan, s
 	return
 }
 
-var shouldPrint bool
-
-func EnablePrint() {
-	shouldPrint = true
-}
-
-func DisablePrint() {
-	shouldPrint = false
-}
-
 // Allocate an object of size bytes.
 // Small objects are allocated from the per-P cache's free lists.
 // Large objects (> 32 kB) are allocated straight from the heap.
@@ -960,13 +950,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 			} else {
 				sizeclass = size_to_class128[(size-smallSizeMax+largeSizeDiv-1)/largeSizeDiv]
 			}
-			sb := size
 			size = uintptr(class_to_size[sizeclass])
-			if shouldPrint {
-				println("Rounding size from ", sb, " to ", size)
-			}
-			// ARRAYS NOT SUPPORTED FOR NOW BUT CAN BE EASILY EXTENDED
-			if memtype == isPersistent && noscan == false && typ.size == dataSize {
+
+			if memtype == isPersistent && noscan == false {
+				// TODO: while accounting number of allocations of a type, how
+				// many should an array allocation of x elements contribute?
 				typInd = typeIndex(typ, sizeclass)
 			}
 			spc := makeSpanClass(sizeclass, noscan)
@@ -1017,13 +1005,16 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		if typ == deferType {
 			dataSize = unsafe.Sizeof(_defer{})
 		}
-		if false {
-			println("Calling heap set type x = ", x, " size = ", size, " dataSize = ", dataSize, " typ.size = ", typ.size,
-				" typ.ptrdata = ", typ.ptrdata)
-		}
+
 		metadata := uintptr(x)
 		shouldLog := (newSpan || typInd == 0) && memtype == isPersistent
 		if shouldLog {
+			// This is a scan allocation (allocated object has a pointer within
+			// it). So, allocation size is at least 8 bytes. The allocation size
+			// rounded up to the next malloc sizeclass will be an even number
+			// and hence have its last bit unset. We use this last bit of the
+			// allocated address to indicate if heap type bits should be logged.
+			// The last bit
 			metadata |= 1
 		}
 		heapBitsSetType(uintptr(x), size, dataSize, typ, metadata)
