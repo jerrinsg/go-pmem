@@ -146,13 +146,15 @@ var runtimeDecls = [...]struct {
 	{"msanread", funcTag, 113},
 	{"msanwrite", funcTag, 113},
 	{"inpmem", funcTag, 114},
+	{"getTxHandle", funcTag, 115},
+	{"setTxHandle", funcTag, 116},
 	{"x86HasPOPCNT", varTag, 11},
 	{"x86HasSSE41", varTag, 11},
 	{"arm64HasATOMICS", varTag, 11},
 }
 
 func runtimeTypes() []*types.Type {
-	var typs [115]*types.Type
+	var typs [117]*types.Type
 	typs[0] = types.Bytetype
 	typs[1] = types.NewPtr(typs[0])
 	typs[2] = types.Types[TANY]
@@ -268,5 +270,7 @@ func runtimeTypes() []*types.Type {
 	typs[112] = functype(nil, []*Node{anonfield(typs[47])}, nil)
 	typs[113] = functype(nil, []*Node{anonfield(typs[47]), anonfield(typs[47])}, nil)
 	typs[114] = functype(nil, []*Node{anonfield(typs[47])}, []*Node{anonfield(typs[11])})
+	typs[115] = functype(nil, nil, []*Node{anonfield(typs[53])})
+	typs[116] = functype(nil, []*Node{anonfield(typs[53])}, nil)
 	return typs[:]
 }
