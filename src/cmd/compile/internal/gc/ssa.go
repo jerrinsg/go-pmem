@@ -211,6 +211,8 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 		}
 	}
 
+	s.hasTxn = fn.hasTxn
+
 	// Convert the AST-based IR to the SSA-based IR
 	s.stmtList(fn.Func.Enter)
 	s.stmtList(fn.Nbody)
@@ -230,6 +232,9 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 
 	s.insertPhis()
 
+	if s.hasTxn {
+		s.f.HasTxn = true
+	}
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
 	return s.f
@@ -385,6 +390,7 @@ type state struct {
 	txIntf          *ssa.Value
 	txIntfUnsafePtr *ssa.Value
 	inTxBlock       bool
+	hasTxn          bool
 }
 
 type funcLine struct {

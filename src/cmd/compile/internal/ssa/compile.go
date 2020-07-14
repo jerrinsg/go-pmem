@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+var Flag_txn bool
+
 // Compile is the main entry point for this package.
 // Compile modifies f so that on return:
 //   · all Values in f map to 0 or 1 assembly instructions of the target architecture
@@ -402,6 +404,7 @@ var passes = [...]pass{
 	{name: "branchelim", fn: branchelim},
 	{name: "fuse", fn: fuseAll},
 	{name: "dse", fn: dse},
+	{name: "logStore", fn: logStore},
 	{name: "writebarrier", fn: writebarrier, required: true}, // expand write barrier ops
 	{name: "insert resched checks", fn: insertLoopReschedChecks,
 		disabled: objabi.Preemptibleloops_enabled == 0}, // insert resched checks in loops.
