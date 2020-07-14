@@ -158,6 +158,12 @@ const (
 	_, nodeEmbedded  // ODCLFIELD embedded type
 	_, nodeInlFormal // OPAUTO created by inliner, derived from callee formal
 	_, nodeInlLocal  // OPAUTO created by inliner, derived from callee local
+	nodeTxClass, _   // tracks type of node when txn flag is used for compiling.
+	_, _             // 0 -> nothing,
+	// Before buildSSA, 1 -> node has been injected by syntax/parser.go.
+	// During buildSSA, 1-> node is lhs of an assignment op within txn() block
+	// 2 -> node reads a value within txn() block. Useful if tracking reads inside txn() block
+	// 3 -> node known to be in pmem at compile time (created using pnew & escape analysis didn't put on stack)
 )
 
 func (n *Node) Class() Class     { return Class(n.flags.get3(nodeClass)) }
@@ -186,6 +192,7 @@ func (n *Node) HasOpt() bool                { return n.flags&nodeHasOpt != 0 }
 func (n *Node) Embedded() bool              { return n.flags&nodeEmbedded != 0 }
 func (n *Node) InlFormal() bool             { return n.flags&nodeInlFormal != 0 }
 func (n *Node) InlLocal() bool              { return n.flags&nodeInlLocal != 0 }
+func (n *Node) TxClass() uint8              { return n.flags.get2(nodeTxClass) }
 
 func (n *Node) SetClass(b Class)     { n.flags.set3(nodeClass, uint8(b)) }
 func (n *Node) SetWalkdef(b uint8)   { n.flags.set2(nodeWalkdef, b) }
@@ -213,6 +220,7 @@ func (n *Node) SetHasOpt(b bool)                { n.flags.set(nodeHasOpt, b) }
 func (n *Node) SetEmbedded(b bool)              { n.flags.set(nodeEmbedded, b) }
 func (n *Node) SetInlFormal(b bool)             { n.flags.set(nodeInlFormal, b) }
 func (n *Node) SetInlLocal(b bool)              { n.flags.set(nodeInlLocal, b) }
+func (n *Node) SetTxClass(b uint8)              { n.flags.set2(nodeTxClass, b) }
 
 // Val returns the Val for the node.
 func (n *Node) Val() Val {
