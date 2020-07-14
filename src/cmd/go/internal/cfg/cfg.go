@@ -42,10 +42,10 @@ var (
 	BuildToolchainCompiler func() string
 	BuildToolchainLinker   func() string
 	BuildTrimpath          bool // -trimpath flag
+	BuildTxn               bool // -txn flag
 	BuildV                 bool // -v flag
 	BuildWork              bool // -work flag
 	BuildX                 bool // -x flag
-	BuildTxn               bool // -txn flag
 
 	ModCacheRW bool   // -modcacherw flag
 	ModFile    string // -modfile flag

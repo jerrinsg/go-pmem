@@ -53,9 +53,6 @@ func BuildInit() {
 }
 
 func instrumentInit() {
-	if cfg.BuildTxn {
-		forcedGcflags = append(forcedGcflags, "-txn")
-	}
 	if !cfg.BuildRace && !cfg.BuildMSan {
 		return
 	}

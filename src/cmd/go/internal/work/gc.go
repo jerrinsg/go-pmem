@@ -112,6 +112,9 @@ func (gcToolchain) gc(b *Builder, a *Action, archive string, importcfg []byte, s
 	}
 
 	gcflags := str.StringList(forcedGcflags, p.Internal.Gcflags)
+	if cfg.BuildTxn {
+		gcflags = append(gcflags, "-txn")
+	}
 	if compilingRuntime {
 		// Remove -N, if present.
 		// It is not possible to build the runtime with no optimizations,
@@ -174,7 +177,7 @@ CheckFlags:
 		// except for known commonly used flags.
 		// If the user knows better, they can manually add their own -c to the gcflags.
 		switch flag {
-		case "-N", "-l", "-S", "-B", "-C", "-I":
+		case "-N", "-l", "-S", "-B", "-C", "-I", "-txn":
 			// OK
 		default:
 			canDashC = false
