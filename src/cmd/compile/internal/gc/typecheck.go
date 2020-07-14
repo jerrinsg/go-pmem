@@ -116,6 +116,13 @@ func resolve(n *Node) (res *Node) {
 func typecheckslice(l []*Node, top int) {
 	for i := range l {
 		l[i] = typecheck(l[i], top)
+		// TODO: (mohitv) This is a hack to capture the type of transaction.TX
+		// interface. Find a better way
+		if flag_txn && (l[i].TxClass() == 1) && l[i].Op == OAS {
+			if l[i].Left != nil {
+				txType = l[i].Left.Type
+			}
+		}
 	}
 }
 
