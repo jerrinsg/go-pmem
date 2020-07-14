@@ -25,9 +25,10 @@ type parser struct {
 	errcnt int      // number of errors encountered
 	pragma Pragma   // pragma flags
 
-	fnest  int    // function nesting level (for error handling)
-	xnest  int    // expression nesting level (for complit ambiguity resolution)
-	indent []byte // tracing support
+	fnest   int    // function nesting level (for error handling)
+	xnest   int    // expression nesting level (for complit ambiguity resolution)
+	indent  []byte // tracing support
+	logMode LogMode
 }
 
 func (p *parser) init(file *PosBase, r io.Reader, errh ErrorHandler, pragh PragmaHandler, mode Mode) {
@@ -2044,14 +2045,45 @@ func (p *parser) txBlockStmt(declTx bool) *TxBlockStmt {
 	t.pos = p.pos()
 	var sList []Stmt
 	p.next()
-	p.want(_Lparen)
-	p.want(_Rparen) // Not expecting any argument in txn() use
+	args, hasDots := p.argList()
+	if hasDots {
+		p.syntaxError("unexpected ... in args to txn() call")
+	}
+	if len(args) == 0 {
+		// no args => undo logging
+		p.logMode = UndoLog
+	} else if len(args) == 1 {
+		logger, ok := args[0].(*BasicLit)
+		if !ok {
+			p.syntaxError("unexpected arg in function call to txn()")
+		}
+		switch logger.Value {
+		case "\"undo\"":
+			p.logMode = UndoLog
+		case "\"null\"":
+			p.logMode = NullLog
+		default:
+			p.syntaxError("other logging modes in txn() not yet supported")
+		}
+	} else {
+		p.syntaxError("unexpected no. of args in function call to txn()")
+	}
+	t.Logger = p.logMode
 
 	var s string
 	if declTx {
 		s = "var __tx transaction.TX"
 		sList = append(sList, ParseStmtFromScratch(s))
 	}
+	if p.logMode == NullLog {
+		// Add fake initialization to avoid syntax error due to unused import
+		s = "_ = __tx"
+		sList = append(sList, ParseStmtFromScratch(s))
+		t.Pre = sList
+		t.B = p.blockStmt("")
+		return t
+	}
+	// Undo Log
 	s = "__tx = transaction.NewUndoTx()"
 	sList = append(sList, ParseStmtFromScratch(s))
 	s = "__tx.Begin()"
