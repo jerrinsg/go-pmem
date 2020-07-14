@@ -590,7 +590,7 @@ func inlnode(n *Node, maxCost int32) *Node {
 
 	inlnodelist(n.List, maxCost)
 	switch n.Op {
-	case OBLOCK:
+	case OBLOCK, OTXBLOCK:
 		for _, n2 := range n.List.Slice() {
 			if n2.Op == OINLCALL {
 				inlconv2stmt(n2)

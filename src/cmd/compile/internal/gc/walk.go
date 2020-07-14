@@ -211,7 +211,7 @@ func walkstmt(n *Node) *Node {
 			return walkstmt(nn)
 		}
 
-	case OBLOCK:
+	case OBLOCK, OTXBLOCK:
 		walkstmtlist(n.List.Slice())
 
 	case OXCASE:
