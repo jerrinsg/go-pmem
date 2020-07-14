@@ -198,6 +198,10 @@ func msanwrite(addr, size uintptr)
 // inpmem check for ptr
 func inpmem(addr uintptr) bool
 
+// get, set for tx handle, maintained per goroutine
+func getTxHandle() unsafe.Pointer
+func setTxHandle(unsafe.Pointer)
+
 // architecture variants
 var support_popcnt bool
 var support_sse41 bool
