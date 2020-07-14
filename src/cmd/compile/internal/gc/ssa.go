@@ -30,6 +30,7 @@ var ssaDump string     // early copy of $GOSSAFUNC; the func name to dump output
 var ssaDumpStdout bool // whether to dump to stdout
 var ssaDumpCFG string  // generate CFGs for these phases
 const ssaDumpFile = "ssa.html"
+const txnPkgPath = "github.com/vmware/go-pmem-transaction/" // TODO: (mohitv) This is a hack
 
 // The max number of defers in a function using open-coded defers. We enforce this
 // limit because the deferBits bitmask is currently a single byte (to minimize code size)
@@ -661,7 +662,8 @@ type state struct {
 	// methods of transaction package. These will be used during buildSSA to
 	// inject calls to tx.Begin(), tx.End() and later on calls to log the stores
 	// within txn("undo") block
-	txIntf *ssa.Value
+	txIntf          *ssa.Value
+	txIntfUnsafePtr *ssa.Value
 }
 
 type funcLine struct {
@@ -1085,9 +1087,12 @@ func (s *state) stmt(n *Node) {
 		if s.inTxBlock {
 			s.Fatalf("We don't support nested txn() usage currently")
 		}
+		// fill tx handle in g
+		s.initTxHandleInG()
 		s.inTxBlock = true
 		s.stmtList(n.List)
 		s.inTxBlock = false
+		s.resetTxHandleInG()
 
 	// No-ops
 	case OEMPTY, ODCLCONST, ODCLTYPE, OFALL:
@@ -1590,6 +1595,9 @@ func (s *state) exit() *ssa.Block {
 		}
 	}
 
+	if s.inTxBlock {
+		s.resetTxHandleInG()
+	}
 	// Run exit code. Typically, this code copies heap-allocated PPARAMOUT
 	// variables back to the stack.
 	s.stmtList(s.curfn.Func.Exit)
@@ -5111,6 +5119,135 @@ func markNodeForTxLog(n *Node) {
 		return
 	}
 	n.SetTxClass(1)
+}
+
+// If nil, initialize tx handle in the current goroutine.
+// Otherwise retrieve the existing tx handle using runtime.getTxHandle()
+func (s *state) initTxHandleInG() {
+	// txHandle = runtime.getTxHandle()
+	fn := sysfunc("getTxHandle")
+	r := s.rtcall(fn, true, []*types.Type{types.Types[TUNSAFEPTR]})
+	txHandle := r[0]
+	nilValue := s.constNil(types.Types[TUNSAFEPTR])
+
+	// if txHandle == nil
+	isTxHandleNil := s.newValue2(ssa.OpEqPtr, types.Types[TBOOL], txHandle, nilValue)
+	likely := int8(-1) // set the case when txHandle==nil as unlikely
+	bThen := s.f.NewBlock(ssa.BlockPlain)
+	bEnd := s.f.NewBlock(ssa.BlockPlain)
+
+	b := s.endBlock()
+	b.Kind = ssa.BlockIf
+	b.SetControl(isTxHandleNil)
+	b.Likely = ssa.BranchPrediction(likely)
+	b.AddEdgeTo(bThen)
+	b.AddEdgeTo(bEnd)
+
+	s.startBlock(bThen)
+	// txHandle is nil, so we are in the "then" block
+
+	// Allocate space to store new tx variable returned by transaction package
+	fn = sysfunc("newobject")
+	r = s.rtcall(fn, true, []*types.Type{types.NewPtr(txType)}, s.expr(typename(txType)))
+	txPtr := r[0]
+
+	// tx = unsafe.Pointer(transaction.NewUndoTx())
+	// *txPtr = tx
+
+	// We re-use *state.rtcall() method to inject call to methods of transaction
+	// package. rtcall() should be renamed as it can inject call to any function
+	// given the LSym and types of {args, results} but we leave it as it is
+	fn = Ctxt.LookupABI(txnPkgPath+"transaction.NewUndoTx", obj.ABIInternal)
+	r = s.rtcall(fn, true, []*types.Type{txType})
+	txIntf := r[0]
+
+	itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], txIntf)
+	s.store(types.Types[TUINTPTR], txPtr, itab)
+	idata := s.newValue1(ssa.OpIData, s.f.Config.Types.BytePtr, txIntf)
+	p := s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.BytePtrPtr, 8, txPtr)
+	s.store(s.f.Config.Types.BytePtr, p, idata)
+
+	// txIntfUnsafePtr = (unsafe.Pointer)(txPtr)
+	txIntfUnsafePtr := s.newValue1(ssa.OpCopy, types.Types[TUNSAFEPTR], txPtr)
+
+	// runtime.setTxHandle(txIntfUnsafePtr)
+	fn = sysfunc("setTxHandle")
+	r = s.rtcall(fn, true, []*types.Type{}, txIntfUnsafePtr)
+	b = s.endBlock()
+	if b == nil {
+		panic("[ssa.go] *state.initTxHandleInG(): ssa.Block is nil")
+	}
+	b.AddEdgeTo(bEnd)
+	s.startBlock(bEnd)
+
+	// txIntfUnsafePtr = runtime.getTxHandle()
+	fn = sysfunc("getTxHandle")
+	r = s.rtcall(fn, true, []*types.Type{types.Types[TUNSAFEPTR]})
+	txIntfUnsafePtr = r[0]
+	// txHandle = (*transaction.TX)(txIntfUnsafePtr)
+	txHandle = s.newValue1(ssa.OpCopy, types.NewPtr(txType), txIntfUnsafePtr)
+	// s.TxIntf = *txHandle
+	s.txIntf = s.load(txType, txHandle)
+	s.txIntfUnsafePtr = txIntfUnsafePtr
+
+	// code for tx.Begin() goes here
+	txBegin := typecheck(txBeginFn.Left, ctxCallee)
+	fnOffset := txBegin.Xoffset
+	dowidth(txBegin.Type)
+	s.txnIntfCall(fnOffset, []*types.Type{txBegin.Type.Results()}, nil)
+}
+
+// This function injects code to successfully end a transaction. This can happen
+// when txn() code block ends syntactically and/or if there is a return in
+// between.
+// Reset tx handle of the current goroutine to nil if needed, using
+// runtime.setTxHandle(). Else do nothing.
+// If tx.End() returns true, tx handle is set to nil & transaction.Release(tx)
+// is called. If tx.End() returns false, don't do anything.
+func (s *state) resetTxHandleInG() {
+	if s.curBlock == nil {
+		return
+	}
+	// b = tx.End()
+	txEnd := typecheck(txEndFn.Left, ctxCallee)
+	fnOffset := txEnd.Xoffset
+	results := s.txnIntfCall(fnOffset, []*types.Type{types.Types[TBOOL]}, nil)
+	// tx.End() returns one arg: true/false
+	result := results[0]
+
+	// if t.End() {}
+	likely := int8(1)
+	bThen := s.f.NewBlock(ssa.BlockPlain)
+	bEnd := s.f.NewBlock(ssa.BlockPlain)
+
+	b := s.endBlock()
+	b.Kind = ssa.BlockIf
+	b.SetControl(result)
+	b.Likely = ssa.BranchPrediction(likely)
+	b.AddEdgeTo(bThen)
+	b.AddEdgeTo(bEnd)
+
+	s.startBlock(bThen)
+	// End() returned true, so we are in the "then" block
+	// call transaction.Release(tx)
+
+	// We re-use *state.rtcall() method to inject call to methods of transaction
+	// package. rtcall() should be renamed as it can inject call to any function
+	// given the LSym and types of {args, results} but we leave it as it is
+	fn := Ctxt.LookupABI(txnPkgPath+"transaction.Release", obj.ABIInternal)
+	s.rtcall(fn, true, nil, s.txIntf)
+
+	// reset tx handle in "g"
+	// runtime.setTxHandle(nil)
+	nilValue := s.constNil(types.Types[TUNSAFEPTR])
+	fn = sysfunc("setTxHandle")
+	s.rtcall(fn, true, []*types.Type{}, nilValue)
+	b = s.endBlock()
+	if b == nil {
+		panic("[ssa.go] *state.resetTxHandleInG(): ssa.Block is nil")
+	}
+	b.AddEdgeTo(bEnd)
+	s.startBlock(bEnd)
 }
 
 // sets up call to a method of transaction interface
