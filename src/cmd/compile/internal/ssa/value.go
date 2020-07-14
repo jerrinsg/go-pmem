@@ -59,6 +59,7 @@ type Value struct {
 	LogThisStore  bool
 	TxHandle      *Value
 	InPmem        bool
+	InVheap       bool
 
 	// Storage for the first three args
 	argstorage [3]*Value
