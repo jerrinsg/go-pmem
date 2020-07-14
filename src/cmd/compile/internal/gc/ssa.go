@@ -444,6 +444,8 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 		}
 	}
 
+	s.hasTxn = fn.hasTxn
+
 	// Convert the AST-based IR to the SSA-based IR
 	s.stmtList(fn.Func.Enter)
 	s.stmtList(fn.Nbody)
@@ -463,6 +465,9 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 
 	s.insertPhis()
 
+	if s.hasTxn {
+		s.f.HasTxn = true
+	}
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
 
@@ -657,13 +662,14 @@ type state struct {
 
 	prevCall *ssa.Value // the previous call; use this to tie results to the call op.
 
-	inTxBlock bool
 	// store transaction interface's ssa.Value to be used for injecting calls to
 	// methods of transaction package. These will be used during buildSSA to
 	// inject calls to tx.Begin(), tx.End() and later on calls to log the stores
 	// within txn("undo") block
 	txIntf          *ssa.Value
 	txIntfUnsafePtr *ssa.Value
+	inTxBlock       bool
+	hasTxn          bool
 }
 
 type funcLine struct {
