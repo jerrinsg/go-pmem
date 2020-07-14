@@ -137,6 +137,16 @@ var racepkg *types.Pkg // package runtime/race
 
 var msanpkg *types.Pkg // package runtime/msan
 
+// variables storing information of tx interface are used in gc/ssa.go during
+// buildssa. TODO: (mohitv) Find a better way.
+var txType *types.Type // used to read type of tx variable (transaction.TX)
+var txBeginFn *Node    // used to read offset of Begin() method in tx interface
+var txEndFn *Node      // used to read offset of End() method in tx interface
+var txLogFn *Node      // used to read offset of Log() method in tx interface
+var txLog3Fn *Node     // used to read offset of Log3() method in tx interface
+var txLockFn *Node     // used to read offset of Lock() method in tx interface
+var txRLockFn *Node    // used to read offset of RLock() method in tx interface
+
 var unsafepkg *types.Pkg // package unsafe
 
 var trackpkg *types.Pkg // fake package for field tracking
