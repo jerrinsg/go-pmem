@@ -34,10 +34,10 @@ var (
 	BuildToolchainName     string
 	BuildToolchainCompiler func() string
 	BuildToolchainLinker   func() string
+	BuildTxn               bool // -txn flag
 	BuildV                 bool // -v flag
 	BuildWork              bool // -work flag
 	BuildX                 bool // -x flag
-	BuildTxn               bool // -txn flag
 
 	CmdName string // "build", "install", "list", etc.
 
