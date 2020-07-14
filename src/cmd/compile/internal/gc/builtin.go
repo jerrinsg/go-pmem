@@ -338,7 +338,7 @@ func runtimeTypes() []*types.Type {
 	typs[129] = functype(nil, []*Node{anonfield(typs[64]), anonfield(typs[64])}, nil)
 	typs[130] = functype(nil, []*Node{anonfield(typs[24]), anonfield(typs[24])}, nil)
 	typs[131] = functype(nil, []*Node{anonfield(typs[5])}, []*Node{anonfield(typs[6])})
-	typs[132] = functype(nil, nil, []*Node{anonfield(typs[7])})
-	typs[133] = functype(nil, []*Node{anonfield(typs[7])}, nil)
+	typs[132] = functype(nil, nil, []*Node{anonfield(typs[8])})
+	typs[133] = functype(nil, []*Node{anonfield(typs[8])}, nil)
 	return typs[:]
 }

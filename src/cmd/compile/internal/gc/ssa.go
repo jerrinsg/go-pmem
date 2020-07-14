@@ -4510,6 +4510,40 @@ func (s *state) call(n *Node, k callKind, returnResultAddr bool) *ssa.Value {
 	var ACArgs []ssa.Param
 	var ACResults []ssa.Param
 	var callArgs []*ssa.Value
+
+	if flag_txn && s.inTxBlock && n.Op == OCALLMETH && k == callNormal {
+		sym = fn.Sym
+		// Get the receiver of OCALLMETH
+		t := n.Left.Type
+		args := n.Rlist.Slice()
+		arg := args[0]
+		arg.Type = t.Recv().Type
+		var fnOffset int64
+		replaceWithTxCall := false
+		switch sym.Linksym() {
+		case Ctxt.LookupABI("sync.(*RWMutex).Lock", obj.ABIInternal):
+			// replace m.Lock() with with tx.Lock(m)
+			txLock := typecheck(txLockFn.Left, ctxCallee)
+			fnOffset = txLock.Xoffset
+			replaceWithTxCall = true
+		case Ctxt.LookupABI("sync.(*RWMutex).RLock", obj.ABIInternal):
+			// replace m.RLock() with with tx.RLock(m)
+			txRLock := typecheck(txRLockFn.Left, ctxCallee)
+			fnOffset = txRLock.Xoffset
+			replaceWithTxCall = true
+		case Ctxt.LookupABI("sync.(*RWMutex).Unlock", obj.ABIInternal):
+			return nil
+		}
+		if replaceWithTxCall {
+			// Run all assignments of temps.
+			// The temps are introduced to avoid overwriting argument
+			// slots when arguments themselves require function calls.
+			s.stmtList(n.List)
+			s.txnIntfCall(fnOffset, nil, arg)
+			return nil
+		}
+	}
+
 	res := n.Left.Type.Results()
 	if k == callNormal {
 		nf := res.NumFields()

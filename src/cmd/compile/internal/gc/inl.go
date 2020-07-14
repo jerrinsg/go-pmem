@@ -551,6 +551,8 @@ func inlnodelist(l Nodes, maxCost int32, inlMap map[*Node]bool) {
 	}
 }
 
+var inTxBlock int
+
 // inlnode recurses over the tree to find inlineable calls, which will
 // be turned into OINLCALLs by mkinlcall. When the recursion comes
 // back up will examine left, right, list, rlist, ninit, ntest, nincr,
@@ -619,7 +621,14 @@ func inlnode(n *Node, maxCost int32, inlMap map[*Node]bool) *Node {
 		}
 	}
 
+	// Prevent marking some function calls within txn block as OINLCALL even if
+	// they are inlineable
+	if n.Op == OTXBLOCK {
+		inTxBlock++
+	}
 	inlnodelist(n.List, maxCost, inlMap)
+	inTxBlock--
+
 	if n.Op == OBLOCK || n.Op == OTXBLOCK {
 		for _, n2 := range n.List.Slice() {
 			if n2.Op == OINLCALL {
@@ -885,6 +894,17 @@ func mkinlcall(n, fn *Node, maxCost int32, inlMap map[*Node]bool) *Node {
 		// we disable inlining of runtime functions when instrumenting.
 		// The example that we observed is inlining of LockOSThread,
 		// which lead to false race reports on m contents.
+		return n
+	}
+
+	// skip inlining calls to sync.(*RWMutex).RLock within txn block. TODO: (mohitv) This is a hack
+	// Go 1.12 started inlining calls to sync.(*RWMutex).RLock so it is not visible during buildssa.
+	// sync.(*RWMutex).RLock is a part of the concurrency model of txn in go-pmem. We need to see these
+	// calls during buildSSA
+	if inTxBlock != 0 && fn.Sym.Linksym() == Ctxt.LookupABI("sync.(*RWMutex).RLock", obj.ABIInternal) {
+		if Debug['m'] != 0 {
+			fmt.Printf("%v: skipping inlining call to %v\n", n.Line(), fn)
+		}
 		return n
 	}
 
