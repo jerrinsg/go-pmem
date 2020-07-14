@@ -2440,8 +2440,12 @@ func (s *state) expr(n *Node) *ssa.Value {
 	case OCALLINTER, OCALLMETH:
 		a := s.call(n, callNormal)
 		v := s.load(n.Type, a)
-		if flag_txn && s.hasTxn && s.isPmemAddr(n, v) {
-			v.InPmem = true
+		if flag_txn && s.hasTxn {
+			if s.isPmemAddr(n, v) {
+				v.InPmem = true
+			} else if s.isVheapAddr(n, v) {
+				v.InVheap = true
+			}
 		}
 		return v
 
@@ -3744,6 +3748,26 @@ func (s *state) isPmemAddr(n *Node, v *ssa.Value) bool {
 	return false
 }
 
+func (s *state) isVheapAddr(n *Node, v *ssa.Value) bool {
+	// first get the fncall's ssa value through the last ssa value affecting
+	// memory
+	call := s.vars[&memVar]
+	if call.Op != ssa.OpStaticCall {
+		return false
+	}
+	fn := call.Aux.(*obj.LSym)
+	if fn == sysfunc("newobject") {
+		return true
+	} else if fn == sysfunc("makeslice") {
+		n = n.Rlist.Index(n.Rlist.Len() - 1)
+		memtype := n.E.(*Mpint).Int64()
+		if memtype == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Calls the function n using the specified call type.
 // Returns the address of the return value (or nil if none).
 func (s *state) call(n *Node, k callKind) *ssa.Value {
@@ -4525,9 +4549,14 @@ func (s *state) storeTypePtrs(t *types.Type, left, right *ssa.Value) {
 			// We know how to track if a slice is in pmem only for this case. This
 			// is okay, because otherwise we will inject additional runtime.inpmem()
 			// check which will still be functionally correct.
-			if v.Op == ssa.OpSliceMake && v.Args[0].InPmem {
-				left.InPmem = true
-				v.Args[0].InPmem = false
+			if v.Op == ssa.OpSliceMake {
+				if v.Args[0].InPmem {
+					left.InPmem = true
+					v.Args[0].InPmem = false
+				} else if v.Args[0].InVheap {
+					left.InVheap = true
+					v.Args[0].InVheap = false
+				}
 			}
 		}
 	case t.IsInterface():
