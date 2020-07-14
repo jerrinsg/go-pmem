@@ -232,6 +232,13 @@ func buildssa(fn *Node, worker int) *ssa.Func {
 
 	if s.hasTxn {
 		s.f.HasTxn = true
+
+		// Below needs to be done just once per compilation, as they cannot change
+		// from function to function. TODO: (mohitv) Better way?
+		txLog := typecheck(txLogFn.Left, Ecall) // txLog = txn.Log, not the function call
+		dowidth(txLog.Type)
+		ssa.TxLogFnOffset = txLog.Xoffset
+		ssa.TxLogFnStkSize = txLog.Type.ArgWidth()
 	}
 	// Main call to ssa package to compile function
 	ssa.Compile(s.f)
@@ -746,11 +753,29 @@ func (s *state) rawLoad(t *types.Type, src *ssa.Value) *ssa.Value {
 }
 
 func (s *state) store(t *types.Type, dst, val *ssa.Value) {
+	s.storeOrig(t, dst, val)
+	if flag_txn && dst.StoreWithinTx {
+		dst.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
+}
+
+func (s *state) storeOrig(t *types.Type, dst, val *ssa.Value) {
 	s.vars[&memVar] = s.newValue3A(ssa.OpStore, types.TypeMem, t, dst, val, s.mem())
 }
 
 func (s *state) zero(t *types.Type, dst *ssa.Value) {
 	s.instrument(t, dst, true)
+	s.zeroOrig(t, dst)
+	if flag_txn && dst.StoreWithinTx {
+		dst.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
+}
+
+func (s *state) zeroOrig(t *types.Type, dst *ssa.Value) {
 	store := s.newValue2I(ssa.OpZero, types.TypeMem, t.Size(), dst, s.mem())
 	store.Aux = t
 	s.vars[&memVar] = store
@@ -759,6 +784,16 @@ func (s *state) zero(t *types.Type, dst *ssa.Value) {
 func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 	s.instrument(t, src, false)
 	s.instrument(t, dst, true)
+
+	s.moveOrig(t, dst, src)
+	if flag_txn && dst.StoreWithinTx {
+		dst.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
+}
+
+func (s *state) moveOrig(t *types.Type, dst, src *ssa.Value) {
 	store := s.newValue3I(ssa.OpMove, types.TypeMem, t.Size(), dst, src, s.mem())
 	store.Aux = t
 	s.vars[&memVar] = store
@@ -4342,10 +4377,31 @@ func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) 
 // do *left = right for type t.
 func (s *state) storeType(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	s.instrument(t, left, true)
+	s.storeTypeOrig(t, left, right, skip, leftIsStmt)
+	if flag_txn && left.StoreWithinTx {
+		left.StoreWithinTx = false
+		s.vars[&memVar].LogThisStore = true
+		s.vars[&memVar].TxHandle = s.txIntfUnsafePtr // TODO: (mohitv) Do we need to increase uses count of this *ssa.Value?
+	}
+}
 
+func (s *state) storeTypeOrig(t *types.Type, left, right *ssa.Value, skip skipMask, leftIsStmt bool) {
 	if skip == 0 && (!types.Haspointers(t) || ssa.IsStackAddr(left)) {
 		// Known to not have write barrier. Store the whole type.
 		s.vars[&memVar] = s.newValue3Apos(ssa.OpStore, types.TypeMem, t, left, right, s.mem(), leftIsStmt)
+		return
+	}
+
+	// This special case ensures that for slices, slice pointer is written first,
+	// and then slice len, cap. This is because a slice write is broken into 3 writes
+	// i) update len, ii) update cap & iii) update data, in this order.
+	// But we only track data write and other 2 writes must come after this to ensure
+	// crash consistency
+	if flag_txn && left.StoreWithinTx && t.IsSlice() {
+		if skip&skipPtr == 0 && types.Haspointers(t) {
+			s.storeTypePtrs(t, left, right)
+		}
+		s.storeTypeScalars(t, left, right, skip)
 		return
 	}
 
@@ -6046,6 +6102,10 @@ func (e *ssafn) Syslook(name string) *obj.LSym {
 		return typedmemmove
 	case "typedmemclr":
 		return typedmemclr
+	case "inpmem":
+		return sysfunc("inpmem")
+	case "newobject":
+		return sysfunc("newobject")
 	}
 	Fatalf("unknown Syslook func %v", name)
 	return nil
