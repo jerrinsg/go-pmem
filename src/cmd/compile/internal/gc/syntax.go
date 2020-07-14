@@ -702,6 +702,7 @@ const (
 
 	// statements
 	OBLOCK    // { List } (block of code)
+	OTXBLOCK  // txn() { List } (block of code enclosed within txn() keyword)
 	OBREAK    // break [Sym]
 	OCASE     // case Left or List[0]..List[1]: Nbody (select case after processing; Left==nil and List==nil means default)
 	OXCASE    // case List: Nbody (select case before processing; List==nil means default)

@@ -747,7 +747,7 @@ func (r *importReader) stmtList() []*Node {
 			break
 		}
 		// OBLOCK nodes may be created when importing ODCL nodes - unpack them
-		if n.Op == OBLOCK {
+		if n.Op == OBLOCK || n.Op == OTXBLOCK {
 			list = append(list, n.List.Slice()...)
 		} else {
 			list = append(list, n)
@@ -771,7 +771,7 @@ func (r *importReader) exprList() []*Node {
 
 func (r *importReader) expr() *Node {
 	n := r.node()
-	if n != nil && n.Op == OBLOCK {
+	if n != nil && (n.Op == OBLOCK || n.Op == OTXBLOCK) {
 		Fatalf("unexpected block node: %v", n)
 	}
 	return n

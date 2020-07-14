@@ -2146,6 +2146,10 @@ func typecheck1(n *Node, top int) (res *Node) {
 		typecheckslice(n.Nbody.Slice(), Etop)
 		decldepth--
 
+	case OTXBLOCK:
+		ok |= Etop
+		typecheckslice(n.List.Slice(), Etop)
+
 	case OIF:
 		ok |= Etop
 		typecheckslice(n.Ninit.Slice(), Etop)
@@ -4047,7 +4051,7 @@ func (n *Node) isterminating() bool {
 	// in the block handles the labeled statement case by
 	// skipping over the label. No case OLABEL here.
 
-	case OBLOCK:
+	case OBLOCK, OTXBLOCK:
 		return n.List.isterminating()
 
 	case OGOTO, ORETURN, ORETJMP, OPANIC, OFALL:

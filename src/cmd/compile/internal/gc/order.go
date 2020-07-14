@@ -669,6 +669,10 @@ func (o *Order) stmt(n *Node) {
 	case OBLOCK, OEMPTY:
 		o.stmtList(n.List)
 
+	case OTXBLOCK:
+		orderBlock(&n.List, o.free)
+		o.out = append(o.out, n)
+
 	// Special: n->left is not an expression; save as is.
 	case OBREAK,
 		OCONTINUE,
