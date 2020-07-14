@@ -3797,6 +3797,55 @@ func (s *state) call(n *Node, k callKind) *ssa.Value {
 		}
 		if k == callNormal {
 			sym = fn.Sym
+			if flag_txn && s.inTxBlock {
+				if sym.Linksym() == Ctxt.Lookup("sync.(*RWMutex).Lock") || sym.Linksym() == Ctxt.Lookup("sync.(*RWMutex).RLock") {
+					var fnOffset int64
+					if sym.Linksym() == Ctxt.Lookup("sync.(*RWMutex).Lock") {
+						// replace m.Lock() with with tx.Lock(m)
+						txLock := typecheck(txLockFn.Left, Ecall)
+						fnOffset = txLock.Xoffset
+					} else {
+						txRLock := typecheck(txRLockFn.Left, Ecall)
+						fnOffset = txRLock.Xoffset
+					}
+					// Generate SSA for all temps first. This is done before
+					// function node or its args are converted to SSA
+					s.stmtList(n.List)
+
+					off := Ctxt.FixedFrameSize()
+					itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], s.txIntf)
+					s.nilCheck(itab)
+					itabidx := fnOffset + 2*int64(Widthptr) + 8 // offset of fun field in runtime.itab
+					itab = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.UintptrPtr, itabidx, itab)
+					codeptr := s.load(types.Types[TUINTPTR], itab)
+					rcvr := s.newValue1(ssa.OpIData, types.Types[TUINTPTR], s.txIntf)
+
+					// Set receiver for interface calls
+					addr := s.constOffPtrSP(s.f.Config.Types.UintptrPtr, off)
+					s.store(types.Types[TUINTPTR], addr, rcvr)
+					off += types.Types[TUINTPTR].Size()
+
+					// obtain argument to the call from the receiver list of *gc.Node
+					t := n.Left.Type
+					args := n.Rlist.Slice()
+					f := t.Recv()
+
+					s.storeArg(args[0], f.Type, off+f.Offset)
+
+					off += f.Type.Size()
+					off = Rnd(off, int64(Widthreg))
+
+					call := s.newValue2(ssa.OpInterCall, types.TypeMem, codeptr, s.mem())
+					// Remember how much callee stack space we needed.
+					s.vars[&memVar] = call
+					call.AuxInt = off
+					return nil
+				}
+				if sym.Linksym() == Ctxt.Lookup("sync.(*RWMutex).Unlock") {
+					// Drop the unlock calls within txn() block
+					return nil
+				}
+			}
 			break
 		}
 		// Make a name n2 for the function.
