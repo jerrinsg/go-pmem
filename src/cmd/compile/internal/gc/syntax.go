@@ -154,6 +154,12 @@ const (
 	_, nodeHasVal    // node.E contains a Val
 	_, nodeHasOpt    // node.E contains an Opt
 	_, nodeEmbedded  // ODCLFIELD embedded type
+	nodeTxClass, _   // tracks type of node when txn flag is used for compiling.
+	_, _             // 0 -> nothing,
+	// Before buildSSA, 1 -> node has been injected by syntax/parser.go.
+	// During buildSSA, 1-> node is lhs of an assignment op within txn() block
+	// 2 -> node reads a value within txn() block. Useful if tracking reads inside txn() block
+	// 3 -> node known to be in pmem at compile time (created using pnew & escape analysis didn't put on stack)
 )
 
 func (n *Node) Class() Class     { return Class(n.flags.get3(nodeClass)) }
@@ -175,6 +181,7 @@ func (n *Node) Likely() bool    { return n.flags&nodeLikely != 0 }
 func (n *Node) HasVal() bool    { return n.flags&nodeHasVal != 0 }
 func (n *Node) HasOpt() bool    { return n.flags&nodeHasOpt != 0 }
 func (n *Node) Embedded() bool  { return n.flags&nodeEmbedded != 0 }
+func (n *Node) TxClass() uint8  { return n.flags.get2(nodeTxClass) }
 
 func (n *Node) SetClass(b Class)     { n.flags.set3(nodeClass, uint8(b)) }
 func (n *Node) SetWalkdef(b uint8)   { n.flags.set2(nodeWalkdef, b) }
@@ -193,6 +200,7 @@ func (n *Node) SetLikely(b bool)    { n.flags.set(nodeLikely, b) }
 func (n *Node) SetHasVal(b bool)    { n.flags.set(nodeHasVal, b) }
 func (n *Node) SetHasOpt(b bool)    { n.flags.set(nodeHasOpt, b) }
 func (n *Node) SetEmbedded(b bool)  { n.flags.set(nodeEmbedded, b) }
+func (n *Node) SetTxClass(b uint8)  { n.flags.set2(nodeTxClass, b) }
 
 // MarkNonNil marks a pointer n as being guaranteed non-nil,
 // on all code paths, at all times.
