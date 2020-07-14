@@ -489,6 +489,17 @@ type g struct {
 	// and check for debt in the malloc hot path. The assist ratio
 	// determines how this corresponds to scan work debt.
 	gcAssistBytes int64
+
+	// tx handle
+	tx unsafe.Pointer
+}
+
+func getTxHandle() unsafe.Pointer {
+	return getg().tx
+}
+
+func setTxHandle(t unsafe.Pointer) {
+	getg().tx = t
 }
 
 type m struct {
