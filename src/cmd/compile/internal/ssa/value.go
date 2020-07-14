@@ -56,6 +56,8 @@ type Value struct {
 
 	// Is this value in the per-function constant cache? If so, remove from cache before changing it or recycling it.
 	InCache bool
+	// transaction related identifiers
+	StoreWithinTx bool
 
 	// Storage for the first three args
 	argstorage [3]*Value
