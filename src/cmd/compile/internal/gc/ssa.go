@@ -376,6 +376,8 @@ type state struct {
 	cgoUnsafeArgs bool
 	hasdefer      bool // whether the function contains a defer statement
 	softFloat     bool
+
+	inTxBlock bool
 }
 
 type funcLine struct {
@@ -778,6 +780,14 @@ func (s *state) stmt(n *Node) {
 	case OBLOCK:
 		s.stmtList(n.List)
 
+	case OTXBLOCK:
+		if s.inTxBlock {
+			s.Fatalf("We don't support nested txn() usage currently")
+		}
+		s.inTxBlock = true
+		s.stmtList(n.List)
+		s.inTxBlock = false
+
 	// No-ops
 	case OEMPTY, ODCLCONST, ODCLTYPE, OFALL:
 
@@ -890,6 +900,11 @@ func (s *state) stmt(n *Node) {
 			// which is bad because x is incorrectly considered
 			// dead before the vardef. See issue #14904.
 			return
+		}
+
+		// mark the OAS nodes inside txn block
+		if flag_txn && s.inTxBlock && !n.Colas() {
+			markNodeForTxLog(n.Left)
 		}
 
 		// Evaluate RHS.
@@ -2687,6 +2702,9 @@ func (s *state) assign(left *Node, right *ssa.Value, deref bool, skip skipMask) 
 		s.vars[&memVar] = s.newValue1Apos(ssa.OpVarDef, types.TypeMem, left, s.mem(), !left.IsAutoTmp())
 	}
 	addr := s.addr(left, false)
+	if flag_txn && (left.TxClass() == 1) {
+		addr.StoreWithinTx = true
+	}
 	if isReflectHeaderDataField(left) {
 		// Package unsafe's documentation says storing pointers into
 		// reflect.SliceHeader and reflect.StringHeader's Data fields
@@ -4146,6 +4164,13 @@ func (s *state) rtcall(fn *obj.LSym, returns bool, results []*types.Type, args .
 	call.AuxInt = off
 
 	return res
+}
+
+func markNodeForTxLog(n *Node) {
+	if n == nil || n.IsAutoTmp() {
+		return
+	}
+	n.SetTxClass(1)
 }
 
 // do *left = right for type t.
