@@ -56,8 +56,9 @@ type Node struct {
 
 	Esc uint16 // EscXXX
 
-	Op  Op
-	aux uint8
+	Op     Op
+	aux    uint8
+	hasTxn bool
 }
 
 func (n *Node) ResetAux() {
