@@ -263,7 +263,7 @@ func (e *Escape) stmt(n *Node) {
 	case OBREAK, OCONTINUE, OGOTO:
 		// TODO(mdempsky): Handle dead code?
 
-	case OBLOCK:
+	case OBLOCK, OTXBLOCK:
 		e.stmts(n.List)
 
 	case ODCL:

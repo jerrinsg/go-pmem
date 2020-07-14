@@ -792,6 +792,7 @@ const (
 
 	// statements
 	OBLOCK    // { List } (block of code)
+	OTXBLOCK  // txn() { List } (block of code enclosed within txn() keyword)
 	OBREAK    // break [Sym]
 	OCASE     // case List: Nbody (List==nil means default)
 	OCONTINUE // continue [Sym]

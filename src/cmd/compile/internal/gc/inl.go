@@ -620,7 +620,7 @@ func inlnode(n *Node, maxCost int32, inlMap map[*Node]bool) *Node {
 	}
 
 	inlnodelist(n.List, maxCost, inlMap)
-	if n.Op == OBLOCK {
+	if n.Op == OBLOCK || n.Op == OTXBLOCK {
 		for _, n2 := range n.List.Slice() {
 			if n2.Op == OINLCALL {
 				inlconv2stmt(n2)

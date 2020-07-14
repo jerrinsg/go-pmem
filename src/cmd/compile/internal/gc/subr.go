@@ -1767,6 +1767,16 @@ func listtreecopy(l []*Node, pos src.XPos) []*Node {
 	return out
 }
 
+// implementation taken from liststmt() function
+func txliststmt(l []*Node) *Node {
+	n := nod(OTXBLOCK, nil, nil)
+	n.List.Set(l)
+	if len(l) != 0 {
+		n.Pos = l[0].Pos
+	}
+	return n
+}
+
 func liststmt(l []*Node) *Node {
 	n := nod(OBLOCK, nil, nil)
 	n.List.Set(l)
