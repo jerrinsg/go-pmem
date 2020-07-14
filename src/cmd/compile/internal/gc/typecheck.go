@@ -64,6 +64,7 @@ const (
 	ctxMultiOK             // multivalue function returns are ok
 	ctxAssign              // assigning to expression
 	ctxCompLit             // type in composite literal
+	CtxCallee  = ctxCallee // TODO: (mohitv) Hack to export ctxCallee for use in gc/ssa.go
 )
 
 // type checks the whole tree of an expression.
