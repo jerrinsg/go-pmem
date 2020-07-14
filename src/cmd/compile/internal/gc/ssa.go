@@ -654,8 +654,14 @@ type state struct {
 	lastDeferFinalBlock *ssa.Block // Final block of last defer exit code we generated
 	lastDeferCount      int        // Number of defers encountered at that point
 
-	prevCall  *ssa.Value // the previous call; use this to tie results to the call op.
+	prevCall *ssa.Value // the previous call; use this to tie results to the call op.
+
 	inTxBlock bool
+	// store transaction interface's ssa.Value to be used for injecting calls to
+	// methods of transaction package. These will be used during buildSSA to
+	// inject calls to tx.Begin(), tx.End() and later on calls to log the stores
+	// within txn("undo") block
+	txIntf *ssa.Value
 }
 
 type funcLine struct {
@@ -5105,6 +5111,66 @@ func markNodeForTxLog(n *Node) {
 		return
 	}
 	n.SetTxClass(1)
+}
+
+// sets up call to a method of transaction interface
+// The method to call is specified through fnOffset.
+// Implementation partly taken from *state.call & *state.rtcall methods
+func (s *state) txnIntfCall(fnOffset int64, results []*types.Type, arg *Node) []*ssa.Value {
+	if s.txIntf == nil {
+		s.Fatalf("txn should have been in vars/fwdVars map already")
+	}
+	s.prevCall = nil
+	var ACArgs []ssa.Param
+	var ACResults []ssa.Param
+
+	off := Ctxt.FixedFrameSize()
+	itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], s.txIntf)
+	s.nilCheck(itab)
+	itabidx := fnOffset + 2*int64(Widthptr) + 8 // offset of fun field in runtime.itab
+	itab = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.UintptrPtr, itabidx, itab)
+	codeptr := s.load(types.Types[TUINTPTR], itab)
+	rcvr := s.newValue1(ssa.OpIData, types.Types[TUINTPTR], s.txIntf)
+
+	// Set receiver for interface calls
+	addr := s.constOffPtrSP(s.f.Config.Types.UintptrPtr, off)
+	ACArgs = append(ACArgs, ssa.Param{Type: types.Types[TUINTPTR], Offset: int32(off)})
+	s.store(types.Types[TUINTPTR], addr, rcvr)
+	off += types.Types[TUINTPTR].Size()
+
+	// Write args to the stack
+	if arg != nil {
+		ACArg, _ := s.putArg(arg, arg.Type, off, false)
+		ACArgs = append(ACArgs, ACArg)
+		off += arg.Type.Size()
+	}
+	off = Rnd(off, int64(Widthreg))
+
+	// Accumulate results types and offsets
+	offR := off
+	for _, t := range results {
+		offR = Rnd(offR, t.Alignment())
+		ACResults = append(ACResults, ssa.Param{Type: t, Offset: int32(offR)})
+		offR += t.Size()
+	}
+
+	// Issue call
+	call := s.newValue2A(ssa.OpInterCall, types.TypeMem, ssa.InterfaceAuxCall(ACArgs, ACResults), codeptr, s.mem())
+	s.vars[&memVar] = call
+
+	// Load results
+	res := make([]*ssa.Value, len(results))
+	for i, t := range results {
+		off = Rnd(off, t.Alignment())
+		ptr := s.constOffPtrSP(types.NewPtr(t), off)
+		res[i] = s.load(t, ptr)
+		off += t.Size()
+	}
+	off = Rnd(off, int64(Widthptr))
+
+	// Remember how much callee stack space we needed.
+	call.AuxInt = off
+	return res
 }
 
 // do *left = right for type t.
