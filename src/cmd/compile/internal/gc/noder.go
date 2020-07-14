@@ -90,6 +90,10 @@ func (p *noder) makeSrcPosBase(b0 *syntax.PosBase) *src.PosBase {
 		fn := b0.Filename()
 		if b0.IsFileBase() {
 			b1 = src.NewFileBase(fn, absFilename(fn))
+		} else if b0 == nil {
+			// injected code by tx changes
+			fn = "tx.go" // assign temporary file name to injected stmts
+			b1 = src.NewFileBase(fn, absFilename(fn))
 		} else {
 			// line directive base
 			p0 := b0.Pos()
@@ -144,9 +148,12 @@ type noder struct {
 	scopeVars []int
 
 	lastCloseScopePos syntax.Pos
+	fn                *Node // The function, noder is operating on
 }
 
 func (p *noder) funcBody(fn *Node, block *syntax.BlockStmt) {
+	oldFn := p.fn
+	p.fn = fn
 	oldScope := p.scope
 	p.scope = 0
 	funchdr(fn)
@@ -164,6 +171,7 @@ func (p *noder) funcBody(fn *Node, block *syntax.BlockStmt) {
 
 	funcbody()
 	p.scope = oldScope
+	p.fn = oldFn
 }
 
 func (p *noder) openScope(pos syntax.Pos) {
@@ -1072,11 +1080,46 @@ func (p *noder) blockStmt(stmt *syntax.BlockStmt) []*Node {
 }
 
 func (p *noder) txBlockStmt(txB *syntax.TxBlockStmt) []*Node {
-	nodes := p.stmts(txB.Pre)
+	var nodes []*Node
+	nodes = append(nodes, p.stmts(txB.Pre)...)
+	// mark these nodes to be recognized later during buildssa phase.
+	// buildssa will not create SSA for these nodes. These are still inserted
+	// by parser to avoid unused import error and fill the Context, typesystem
+	// info during compilation
+	for i := range nodes {
+		nodes[i].SetTxClass(1)
+	}
+	if txB.Logger == syntax.NullLog {
+		nodes = append(nodes, p.blockStmt(txB.B)...)
+		return nodes
+	}
+	p.fn.hasTxn = true
 	p.openScope(txB.B.Pos())
 	txBody := p.stmts(txB.B.List)
 	p.closeScope(txB.B.Rbrace)
-	nodes = append(nodes, txBody...)
+	n := txliststmt(txBody)
+	nodes = append(nodes, n)
+
+	// Random function calls to populate transaction interface table
+	// This is used to get offsets of methods to call during buildssa phase
+	if txBeginFn == nil {
+		txBeginFn = p.getNewNodeFromString("__tx.Begin()")
+	}
+	if txEndFn == nil {
+		txEndFn = p.getNewNodeFromString("__tx.End()")
+	}
+	if txLogFn == nil {
+		txLogFn = p.getNewNodeFromString("__tx.Log(a)")
+	}
+	if txLog3Fn == nil {
+		txLog3Fn = p.getNewNodeFromString("__tx.Log3(a)")
+	}
+	if txLockFn == nil {
+		txLockFn = p.getNewNodeFromString("__tx.Lock(a)")
+	}
+	if txRLockFn == nil {
+		txRLockFn = p.getNewNodeFromString("__tx.RLock(a)")
+	}
 	return nodes
 }
 
@@ -1515,4 +1558,9 @@ func unparen(x *Node) *Node {
 		x = x.Left
 	}
 	return x
+}
+
+func (p *noder) getNewNodeFromString(s string) *Node {
+	st := syntax.ParseStmtFromScratch(s)
+	return p.stmt(st)
 }
