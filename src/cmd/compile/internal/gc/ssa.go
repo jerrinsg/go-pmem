@@ -377,6 +377,11 @@ type state struct {
 	hasdefer      bool // whether the function contains a defer statement
 	softFloat     bool
 
+	// store transaction interface's ssa.Value to be used for injecting calls to
+	// methods of transaction package. These will be used during buildSSA to
+	// inject calls to tx.Begin(), tx.End() and later on calls to log the stores
+	// within txn("undo") block
+	txIntf    *ssa.Value
 	inTxBlock bool
 }
 
@@ -4177,6 +4182,41 @@ func markNodeForTxLog(n *Node) {
 		return
 	}
 	n.SetTxClass(1)
+}
+
+// sets up call to a method of transaction interface
+// The method to call is specified through fnOffset.
+// Arguments to the method are in arg (This function assumes space for arg
+// is allocated and "arg" is a slice of empty interfaces).
+// Returns the ssa.Value for call & offset so the caller can save
+// return values on stack.
+// Implementation partly taken from *state.call & *state.rtcall methods
+func (s *state) txnIntfCall(fnOffset int64, arg *ssa.Value) (*ssa.Value, int64) {
+	if s.txIntf == nil {
+		s.Fatalf("txn should have been in vars/fwdVars map already")
+	}
+	off := Ctxt.FixedFrameSize()
+	itab := s.newValue1(ssa.OpITab, types.Types[TUINTPTR], s.txIntf)
+	s.nilCheck(itab)
+	itabidx := fnOffset + 2*int64(Widthptr) + 8 // offset of fun field in runtime.itab
+	itab = s.newValue1I(ssa.OpOffPtr, s.f.Config.Types.UintptrPtr, itabidx, itab)
+	codeptr := s.load(types.Types[TUINTPTR], itab)
+	rcvr := s.newValue1(ssa.OpIData, types.Types[TUINTPTR], s.txIntf)
+
+	// Set receiver for interface calls
+	addr := s.constOffPtrSP(s.f.Config.Types.UintptrPtr, off)
+	s.store(types.Types[TUINTPTR], addr, rcvr)
+	off += types.Types[TUINTPTR].Size()
+	if arg != nil {
+		slType := types.NewSlice(types.Types[TINTER])
+		s.store(slType, s.constOffPtrSP(types.NewPtr(slType), off), arg)
+		off += arg.Type.Size()
+	}
+	off = Rnd(off, int64(Widthreg))
+	call := s.newValue2(ssa.OpInterCall, types.TypeMem, codeptr, s.mem())
+	// Remember how much callee stack space we needed.
+	s.vars[&memVar] = call
+	return call, off
 }
 
 // do *left = right for type t.
