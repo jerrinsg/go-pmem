@@ -114,6 +114,13 @@ type Config struct {
 	// It is an error to set both FakeImportC and go115UsesCgo.
 	go115UsesCgo bool
 
+	// If set, ignore unused import for package specified by TxnPkgPath
+	// This import is actually used when txn() block is expanded internally when
+	// file will be built using gc. All this functionality is in cmd/compile/internal
+	// But go/parser, go/ast, go/types doesn't know about this.
+	SkipTxnPkg bool
+	TxnPkgPath string
+
 	// If Error != nil, it is called with each error found
 	// during type checking; err has dynamic type Error.
 	// Secondary errors (for instance, to enumerate all types
