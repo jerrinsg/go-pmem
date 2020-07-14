@@ -16,6 +16,8 @@ pkg expvar, method (*Map) Delete(string)
 pkg go/doc, const PreserveAST = 4
 pkg go/doc, const PreserveAST Mode
 pkg go/importer, func ForCompiler(*token.FileSet, string, Lookup) types.Importer
+pkg go/token, const TXN Token
+pkg go/token, const TXN = 86
 pkg go/token, method (*File) LineStart(int) Pos
 pkg io, type StringWriter interface { WriteString }
 pkg io, type StringWriter interface, WriteString(string) (int, error)

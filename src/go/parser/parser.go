@@ -520,6 +520,10 @@ var exprEnd = map[token.Token]bool{
 	token.RBRACE:    true,
 }
 
+var txnEnd = map[token.Token]bool{
+	token.RPAREN: true,
+}
+
 // safePos returns a valid file position for a given position: If pos
 // is valid to begin with, safePos returns pos. If pos is out-of-range,
 // safePos returns the EOF position.
@@ -2242,6 +2246,13 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 	case token.BREAK, token.CONTINUE, token.GOTO, token.FALLTHROUGH:
 		s = p.parseBranchStmt(p.tok)
 	case token.LBRACE:
+		s = p.parseBlockStmt()
+		p.expectSemi()
+	case token.TXN:
+		p.next()
+		p.expect(token.LPAREN)
+		p.advance(txnEnd)
+		p.expect(token.RPAREN)
 		s = p.parseBlockStmt()
 		p.expectSemi()
 	case token.IF:
