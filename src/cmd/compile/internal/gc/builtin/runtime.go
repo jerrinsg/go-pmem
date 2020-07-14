@@ -195,6 +195,9 @@ func racewriterange(addr, size uintptr)
 func msanread(addr, size uintptr)
 func msanwrite(addr, size uintptr)
 
+// inpmem check for ptr
+func inpmem(addr uintptr) bool
+
 // architecture variants
 var support_popcnt bool
 var support_sse41 bool

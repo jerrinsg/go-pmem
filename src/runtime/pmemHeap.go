@@ -559,13 +559,18 @@ func freeSpan(npages, base uintptr, needzero uint8, parena uintptr) {
 	h.freeSpanLocked(t, false, false, 0)
 }
 
-// InPmem checks whether 'addr' is an address in the persistent memory range
-func InPmem(addr uintptr) bool {
+// inpmem checks whether 'addr' is an address in the persistent memory range
+func inpmem(addr uintptr) bool {
 	s := spanOfHeap(addr)
 	if s == nil {
 		return false
 	}
 	return s.memtype == isPersistent
+}
+
+// InPmem is the public API for inPmem()
+func InPmem(addr uintptr) bool {
+	return inpmem(addr)
 }
 
 // GetRoot returns the application root pointer. After a restart, the swizzling
