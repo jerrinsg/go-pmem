@@ -2444,7 +2444,11 @@ func (s *state) expr(n *Node) *ssa.Value {
 
 	case OCALLINTER, OCALLMETH:
 		a := s.call(n, callNormal)
-		return s.load(n.Type, a)
+		v := s.load(n.Type, a)
+		if flag_txn && s.hasTxn && s.isPmemAddr(n, v) {
+			v.InPmem = true
+		}
+		return v
 
 	case OGETG:
 		return s.newValue1(ssa.OpGetG, n.Type, s.mem())
@@ -3727,6 +3731,33 @@ func (s *state) intrinsicArgs(n *Node) []*ssa.Value {
 	return args
 }
 
+// We know a node represents a location in pmem if it is assigned using
+// runtime.pnewobject() call or runtime.makeslice() call with last arg == 1
+// This function must be called immediately after SSA nodes for function calls
+// runtime.pnewobject() or runtime.makeslice(). Because function calls update
+// memory, we get to the ssa nodes for these function calls by reading the
+// last variable that updated memory.
+func (s *state) isPmemAddr(n *Node, v *ssa.Value) bool {
+
+	// first get the fncall's ssa value through the last ssa value affecting
+	// memory
+	call := s.vars[&memVar]
+	if call.Op != ssa.OpStaticCall {
+		return false
+	}
+	fn := call.Aux.(*obj.LSym)
+	if fn == sysfunc("pnewobject") {
+		return true
+	} else if fn == sysfunc("makeslice") {
+		n = n.Rlist.Index(n.Rlist.Len() - 1)
+		memtype := n.E.(*Mpint).Int64()
+		if memtype == 1 {
+			return true
+		}
+	}
+	return false
+}
+
 // Calls the function n using the specified call type.
 // Returns the address of the return value (or nil if none).
 func (s *state) call(n *Node, k callKind) *ssa.Value {
@@ -4511,6 +4542,31 @@ func (s *state) storeTypePtrs(t *types.Type, left, right *ssa.Value) {
 		elType := types.NewPtr(t.Elem())
 		ptr := s.newValue1(ssa.OpSlicePtr, elType, right)
 		s.store(elType, left, ptr)
+		if flag_txn && s.hasTxn {
+			v := right
+			// Try to get to the actual value from fwdref
+			if v.Op == ssa.OpFwdRef {
+				var_ := v.Aux.(*Node)
+				v = nil
+			loop:
+				for _, b := range s.f.Blocks {
+					if _, ok := s.defvars[b.ID][var_]; ok {
+						v = s.defvars[b.ID][var_]
+						break loop
+					}
+				}
+				if v == nil {
+					s.Fatalf("[ssa.go] couldn't resolve OpFwdRef, don't know what to do")
+				}
+			}
+			// We know how to track if a slice is in pmem only for this case. This
+			// is okay, because otherwise we will inject additional runtime.inpmem()
+			// check which will still be functionally correct.
+			if v.Op == ssa.OpSliceMake && v.Args[0].InPmem {
+				left.InPmem = true
+				v.Args[0].InPmem = false
+			}
+		}
 	case t.IsInterface():
 		// itab field is treated as a scalar.
 		idata := s.newValue1(ssa.OpIData, s.f.Config.Types.BytePtr, right)

@@ -1,3 +1,7 @@
+
+	
+
+
 package ssa
 
 import (
@@ -20,6 +24,19 @@ func needLog(v *Value) bool {
 		if !IsStackAddr(v.Args[0]) {
 			return true
 		}
+	}
+	return false
+}
+
+func willAccessPmem(v *Value) bool {
+	for v.Op == OpOffPtr || v.Op == OpAddPtr || v.Op == OpPtrIndex || v.Op == OpCopy || v.Op == OpLoad {
+		if v.InPmem {
+			break
+		}
+		v = v.Args[0]
+	}
+	if v.InPmem {
+		return true
 	}
 	return false
 }
@@ -79,48 +96,57 @@ loop:
 					// The memory before the store
 					mem := v.MemoryArg()
 					pos := v.Pos
+					if willAccessPmem(ptr) {
+						// no need to call runtime.inPmem() & create new ssa blocks. Only emit
+						// tx.Log() call here
+						mem = txLogCall(pos, b, mem, sb, sp, ptr, txHandle)
+						v.RemoveArg(2)
+						v.AddArg(mem)
+						b.Values = append(b.Values, after...)
+						blockDone[b.ID] = false // Process this block again, there may be more stores
+					} else {
+						bThen := f.NewBlock(BlockPlain)
+						bEnd := f.NewBlock(b.Kind)
+						bThen.Pos = pos // TODO: (mohitv) verify pos settings
+						bEnd.Pos = b.Pos
+						b.Pos = pos
 
-					bThen := f.NewBlock(BlockPlain)
-					bEnd := f.NewBlock(b.Kind)
-					bThen.Pos = pos // TODO: (mohitv) verify pos settings
-					bEnd.Pos = b.Pos
-					b.Pos = pos
+						// set up control flow for end block
+						bEnd.SetControl(b.Control)
+						bEnd.Likely = b.Likely
+						for _, e := range b.Succs {
+							bEnd.Succs = append(bEnd.Succs, e)
+							e.b.Preds[e.i].b = bEnd
+						}
 
-					// set up control flow for end block
-					bEnd.SetControl(b.Control)
-					bEnd.Likely = b.Likely
-					for _, e := range b.Succs {
-						bEnd.Succs = append(bEnd.Succs, e)
-						e.b.Preds[e.i].b = bEnd
-					}
+						// set up control flow for inpmem test
+						fn := f.fe.Syslook("inpmem")
+						memIf, flag := rtcall(pos, fn, b, mem, sp, ptr, f.Config.Types.Bool) // inpmem call modifies memory
+						b.Kind = BlockIf
+						b.SetControl(flag)
+						b.Likely = BranchUnlikely
+						b.Succs = b.Succs[:0]
+						b.AddEdgeTo(bThen)
+						b.AddEdgeTo(bEnd)
+						bThen.AddEdgeTo(bEnd)
 
-					// set up control flow for inpmem test
-					fn := f.fe.Syslook("inpmem")
-					memIf, flag := rtcall(pos, fn, b, mem, sp, ptr, f.Config.Types.Bool) // inpmem call modifies memory
-					b.Kind = BlockIf
-					b.SetControl(flag)
-					b.Likely = BranchUnlikely
-					b.Succs = b.Succs[:0]
-					b.AddEdgeTo(bThen)
-					b.AddEdgeTo(bEnd)
-					bThen.AddEdgeTo(bEnd)
+						// prepare the then block.
+						// emit tx.Log() call here
+						memThen := txLogCall(pos, bThen, memIf, sb, sp, ptr, txHandle)
 
-					// prepare the then block.
-					// emit tx.Log() call here
-					memThen := txLogCall(pos, bThen, memIf, sb, sp, ptr, txHandle)
+						// NO ELSE block
 
-					// NO ELSE block
-
-					// create a new phi node to merge memory
-					m := bEnd.NewValue0(pos, OpPhi, types.TypeMem) // TODO: (mohitv) Not sure about pos
-					m.Block = bEnd
-					m.AddArg(memIf)
-					m.AddArg(memThen)
-					v.RemoveArg(2) // TODO: (mohitv) 2 is because OpStore has 3 args(0/1/2) , 2nd arg is memory arg
-					v.AddArg(m)
-					bEnd.Values = append(bEnd.Values, after...)
-					for _, w := range after {
-						w.Block = bEnd
+						// create a new phi node to merge memory
+						m := bEnd.NewValue0(pos, OpPhi, types.TypeMem) // TODO: (mohitv) Not sure about pos
+						m.Block = bEnd
+						m.AddArg(memIf)
+						m.AddArg(memThen)
+						v.RemoveArg(2) // TODO: (mohitv) 2 is because OpStore has 3 args(0/1/2) , 2nd arg is memory arg
+						v.AddArg(m)
+						bEnd.Values = append(bEnd.Values, after...)
+						for _, w := range after {
+							w.Block = bEnd
+						}
 					}
 					goto loop
 				}
