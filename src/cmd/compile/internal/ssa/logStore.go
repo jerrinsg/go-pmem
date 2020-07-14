@@ -17,7 +17,23 @@ var (
 func needLog(v *Value) bool {
 	if v.LogThisStore {
 		v.LogThisStore = false // reset to avoid infinite loop
-		if !IsStackAddr(v.Args[0]) {
+		if !willAccessVmem(v.Args[0]) { // TODO: mohitv should we do something more here?
+			return true
+		}
+	}
+	return false
+}
+
+// Implementation taken from ssa.IsStackAddr() in writebarrier.go
+func willAccessVmem(v *Value) bool {
+	for v.Op == OpOffPtr || v.Op == OpAddPtr || v.Op == OpPtrIndex || v.Op == OpCopy {
+		v = v.Args[0]
+	}
+	switch v.Op {
+	case OpSP, OpLocalAddr:
+		return true
+	case OpLoad:
+		if v.InVheap {
 			return true
 		}
 	}
