@@ -754,6 +754,12 @@ func (s *state) move(t *types.Type, dst, src *ssa.Value) {
 // stmtList converts the statement list n to SSA and adds it to s.
 func (s *state) stmtList(l Nodes) {
 	for _, n := range l.Slice() {
+		if flag_txn && (n.TxClass() == 1) {
+			// These nodes were inserted by syntax/parser.go & marked by
+			// gc/noder.go to fill Context, typesystem info. Don't generate SSA
+			// for these nodes
+			continue
+		}
 		s.stmt(n)
 	}
 }
