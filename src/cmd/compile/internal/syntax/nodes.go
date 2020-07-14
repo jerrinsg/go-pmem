@@ -337,8 +337,9 @@ type (
 	}
 
 	TxBlockStmt struct {
-		Pre []Stmt
-		B   *BlockStmt
+		Pre    []Stmt
+		B      *BlockStmt
+		Logger LogMode
 		stmt
 	}
 

@@ -19,6 +19,17 @@ const (
 	GenTxn
 )
 
+// LogMode describes the logging library to be used for injecting tx statements
+type LogMode uint
+
+// Logging implemented in a separate package
+// Only support undo logging and null log
+// null log would only track and flush dirty pmem updates
+const (
+	NullLog = iota
+	UndoLog
+)
+
 // Error describes a syntax error. Error implements the error interface.
 type Error struct {
 	Pos Pos
