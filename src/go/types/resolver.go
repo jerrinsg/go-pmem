@@ -217,6 +217,8 @@ func (check *Checker) collectObjects() {
 
 	var methods []*Func // list of methods with non-blank _ names
 	for fileNo, file := range check.files {
+		check.conf.SkipTxnPkg = true
+		check.conf.TxnPkgPath = "github.com/vmware/go-pmem-transaction/transaction"
 		// The package identifier denotes the current package,
 		// but there is no corresponding package object.
 		check.recordDef(file.Name, nil)
@@ -637,7 +639,12 @@ func (check *Checker) unusedImports() {
 					path := obj.imported.path
 					base := pkgName(path)
 					if obj.name == base {
-						check.softErrorf(obj.pos, "%q imported but not used", path)
+						if check.conf.SkipTxnPkg && path == check.conf.TxnPkgPath {
+							// do nothing
+							fmt.Println("go/types WARN, ignoring txn import")
+						} else {
+							check.softErrorf(obj.pos, "%q imported but not used", path)
+						}
 					} else {
 						check.softErrorf(obj.pos, "%q imported but not used as %s", path, obj.name)
 					}
