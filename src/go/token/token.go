@@ -120,6 +120,9 @@ const (
 	SWITCH
 	TYPE
 	VAR
+	TXN // TODO: (mohitv) Make this alphabetically sorted. If making
+	// this alphabetically sorted, api checker (all.bash) fails because "const"
+	// values for TYPE & VAR need to change too. They were defined in api/go1.1.txt
 	keyword_end
 )
 
@@ -219,6 +222,7 @@ var tokens = [...]string{
 	SELECT: "select",
 	STRUCT: "struct",
 	SWITCH: "switch",
+	TXN:    "txn",
 	TYPE:   "type",
 	VAR:    "var",
 }
