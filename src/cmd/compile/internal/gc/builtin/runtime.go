@@ -250,6 +250,9 @@ func libfuzzerTraceConstCmp2(uint16, uint16)
 func libfuzzerTraceConstCmp4(uint32, uint32)
 func libfuzzerTraceConstCmp8(uint64, uint64)
 
+// inpmem check for ptr
+func inpmem(addr uintptr) bool
+
 // architecture variants
 var x86HasPOPCNT bool
 var x86HasSSE41 bool
