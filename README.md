@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.com/jerrinsg/go-pmem.svg?branch=master)](https://travis-ci.com/jerrinsg/go-pmem)
+
 ## Introduction
 `go-pmem` is a project that adds native persistent memory support to Go. This is
 achieved through a combination of language extensions, enhancements to the Go
