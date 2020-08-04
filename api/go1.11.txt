@@ -464,7 +464,20 @@ pkg os, const ModeIrregular FileMode
 pkg os, const ModeType = 2399666176
 pkg os, func UserCacheDir() (string, error)
 pkg os/signal, func Ignored(os.Signal) bool
+pkg reflect, func PAppendSlice(Value, Value) Value
+pkg reflect, func PMakeSlice(Type, int, int) Value
+pkg reflect, func PNew(Type) Value
 pkg regexp/syntax, method (Op) String() string
+pkg runtime, func CollectPtrs(uintptr, int, []unsafe.Pointer) []unsafe.Pointer
+pkg runtime, func Fence()
+pkg runtime, func FlushRange(unsafe.Pointer, uintptr)
+pkg runtime, func GetRoot() unsafe.Pointer
+pkg runtime, func InPmem(uintptr) bool
+pkg runtime, func PersistRange(unsafe.Pointer, uintptr)
+pkg runtime, func PmemInit(string) (unsafe.Pointer, error)
+pkg runtime, func SetRoot(unsafe.Pointer) error
+pkg runtime, func SwizzlePointer(uintptr) uintptr
+pkg runtime, var AppCallBack func(unsafe.Pointer)
 pkg runtime/trace, func IsEnabled() bool
 pkg runtime/trace, func Log(context.Context, string, string)
 pkg runtime/trace, func Logf(context.Context, string, string, ...interface{})

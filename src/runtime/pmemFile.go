@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	_AT_FDCWD = -0x64 // file descriptor that points to the current working directory
+	atFdCwd = -0x64 // file descriptor that points to the current working directory
 )
 
 // Check whether the path points to a device dax
@@ -25,7 +25,7 @@ func isFileDevDax(path string) bool {
 }
 
 func unlinkFile(path string) int32 {
-	return unlinkFileAt(path, _AT_FDCWD)
+	return unlinkFileAt(path, atFdCwd)
 }
 
 func unlinkFileAt(path string, fd int) int32 {

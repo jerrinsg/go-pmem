@@ -4,14 +4,14 @@
 package runtime
 
 const (
-	FLUSH_ALIGN = 64 // cache line size
-	MS_SYNC     = 4
+	flushAlign = 64 // cache line size
+	msSync     = 4
 )
 
 func flushClflush(addr, len uintptr) {
 	// Loop through cache-line-size (typically 64B) aligned chunks
 	// covering the given range.
-	for uptr := addr &^ (FLUSH_ALIGN - 1); uptr < (addr + len); uptr += FLUSH_ALIGN {
+	for uptr := addr &^ (flushAlign - 1); uptr < (addr + len); uptr += flushAlign {
 		clflush(uptr)
 	}
 }
@@ -19,7 +19,7 @@ func flushClflush(addr, len uintptr) {
 func flushClflushopt(addr, len uintptr) {
 	// Loop through cache-line-size (typically 64B) aligned chunks
 	// covering the given range.
-	for uptr := addr &^ (FLUSH_ALIGN - 1); uptr < (addr + len); uptr += FLUSH_ALIGN {
+	for uptr := addr &^ (flushAlign - 1); uptr < (addr + len); uptr += flushAlign {
 		clflushopt(uptr)
 	}
 }
@@ -27,7 +27,7 @@ func flushClflushopt(addr, len uintptr) {
 func flushClwb(addr, len uintptr) {
 	// Loop through cache-line-size (typically 64B) aligned chunks
 	// covering the given range.
-	for uptr := addr &^ (FLUSH_ALIGN - 1); uptr < addr+len; uptr += FLUSH_ALIGN {
+	for uptr := addr &^ (flushAlign - 1); uptr < addr+len; uptr += flushAlign {
 		clwb(uptr)
 	}
 }
@@ -61,7 +61,7 @@ func msyncRange(addr, len uintptr) (ret int) {
 	// part of it may have been marked as undefined/inaccessible.  Msyncing such
 	// memory is not a bug.
 
-	if ret = int(msync(uptr, len, MS_SYNC)); ret < 0 {
+	if ret = int(msync(uptr, len, msSync)); ret < 0 {
 		println("msync failed")
 	}
 
