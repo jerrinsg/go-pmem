@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	__MAP_SHARED         = 0x1
-	_MAP_SHARED_VALIDATE = 0x03
-	_MAP_SYNC            = 0x80000
-	_EOPNOTSUPP          = 95
-	S_IFMT               = 0xf000
-	S_IFCHR              = 0x2000
-	PATH_MAX             = 256
+	mapShared         = 0x1
+	mapSharedValidate = 0x03
+	mapSync           = 0x80000
+	eOpNotSupp        = 95
+	sIfmt             = 0xf000
+	sIfChr            = 0x2000
+	pathMax           = 256
 )
 
 type timespec_t struct {
@@ -45,7 +45,7 @@ var (
 	// runtime package cannot have local variables escape to the heap. Hence
 	// pathBuf is kept as a global buffer for various APIs that need a byte
 	// array.
-	pathBuf [PATH_MAX]byte
+	pathBuf [pathMax]byte
 )
 
 // Most functions in this file are called as a result of a persistent memory
@@ -69,13 +69,13 @@ func utilMap(mapAddr unsafe.Pointer, fd int32, len, flags int, off uintptr,
 	}
 
 	p, err := mmap(mapAddr, uintptr(len), int32(protection),
-		int32(flags|_MAP_SHARED_VALIDATE|_MAP_SYNC), fd, off)
+		int32(flags|mapSharedValidate|mapSync), fd, off)
 	if err == 0 {
 		// Mapping with MAP_SYNC succeeded. Return the mapped address and a
 		// boolean value 'true' to indicate this file is indeed on a persistent
 		//  memory device.
 		return p, true, err
-	} else if err == _EOPNOTSUPP || err == _EINVAL {
+	} else if err == eOpNotSupp || err == _EINVAL {
 		p, err = mmap(mapAddr, uintptr(len), int32(protection), int32(flags), fd, off)
 		return p, false, err
 	}
@@ -112,7 +112,7 @@ func utilFileSize(fd int32) int {
 }
 
 func isCharDev(mode uint32) bool {
-	return mode&S_IFMT == S_IFCHR
+	return mode&sIfmt == sIfChr
 }
 
 func majorNum(rdev uint64) uint {
@@ -174,7 +174,7 @@ func utilDevDaxSize(fd int32) int {
 		return -1
 	}
 
-	n := read(sFd, unsafe.Pointer(&pathBuf[0]), PATH_MAX)
+	n := read(sFd, unsafe.Pointer(&pathBuf[0]), pathMax)
 	sz := bytesToInt(pathBuf[:n])
 	return sz
 }
@@ -194,9 +194,9 @@ func combineBytes(result []byte, args ...[]byte) int {
 // readLink is a helper function to call the readlink system call. It casts the
 // arguments to the required datatype and invokes the system call.
 func isClassDax(path []byte) bool {
-	var b [PATH_MAX]byte
+	var b [pathMax]byte
 	ret := readlink(uintptr(unsafe.Pointer(&path[0])),
-		uintptr(unsafe.Pointer(&b[0])), PATH_MAX)
+		uintptr(unsafe.Pointer(&b[0])), pathMax)
 	if ret < 0 {
 		return false // read link failed
 	}
@@ -204,7 +204,7 @@ func isClassDax(path []byte) bool {
 	// Find the length of the path to return. This is done by finding the first
 	// byte that is 0 in the byte array.
 	len := 0
-	for len = 0; len < PATH_MAX; len++ {
+	for len = 0; len < pathMax; len++ {
 		if b[len] == 0 {
 			break
 		}

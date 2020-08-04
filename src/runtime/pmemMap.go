@@ -6,7 +6,7 @@ package runtime
 import "unsafe"
 
 const (
-	fileCreate = (1 << 0)
+	fileCreate   = (1 << 0)
 	fileExcl     = (1 << 1)
 	fileAllFlags = fileCreate | fileExcl
 
@@ -17,8 +17,8 @@ const (
 	// is used to verify that the file mode passed to mapFile is supported.
 	validFileModes = 0777
 
-	_O_RDRW = 0x0002 // open for reading and writing
-	_O_EXCL = 0x0800 // exclusive mode - error if file already exists
+	oRdRw = 0x0002 // open for reading and writing
+	oExcl = 0x0800 // exclusive mode - error if file already exists
 
 	// the physical page size
 	sysPageSize = 4096
@@ -43,7 +43,7 @@ const (
 // Some of the code layout taken from PMDK's libpmem library.
 func mapFile(path string, len, flags, mode int, off uintptr,
 	mapAddr unsafe.Pointer) (addr unsafe.Pointer, isPmem bool, err int) {
-	openFlags := _O_RDRW
+	openFlags := oRdRw
 	delFileOnErr := false
 	err = _EINVAL
 
@@ -80,7 +80,7 @@ func mapFile(path string, len, flags, mode int, off uintptr,
 		}
 
 		if flags&fileExcl != 0 {
-			openFlags |= _O_EXCL
+			openFlags |= oExcl
 		}
 
 		if (len != 0) && (flags&fileCreate == 0) {
@@ -135,5 +135,5 @@ func mapHelper(fd int32, flags, len int, off uintptr,
 		}
 	}
 
-	return utilMap(mapAddr, fd, len, __MAP_SHARED, off, false)
+	return utilMap(mapAddr, fd, len, mapShared, off, false)
 }

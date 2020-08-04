@@ -39,12 +39,25 @@ pkg os, const ModeType = 2401763328
 pkg os, func UserHomeDir() (string, error)
 pkg os, method (*File) SyscallConn() (syscall.RawConn, error)
 pkg os, method (*ProcessState) ExitCode() int
+pkg reflect, func PAppendSlice(Value, Value) Value
+pkg reflect, func PMakeSlice(Type, int, int) Value
+pkg reflect, func PNew(Type) Value
 pkg os/exec, method (ExitError) ExitCode() int
 pkg reflect, method (*MapIter) Key() Value
 pkg reflect, method (*MapIter) Next() bool
 pkg reflect, method (*MapIter) Value() Value
 pkg reflect, method (Value) MapRange() *MapIter
 pkg reflect, type MapIter struct
+pkg runtime, func CollectPtrs(uintptr, int, []unsafe.Pointer) []unsafe.Pointer
+pkg runtime, func Fence()
+pkg runtime, func FlushRange(unsafe.Pointer, uintptr)
+pkg runtime, func GetRoot() unsafe.Pointer
+pkg runtime, func InPmem(uintptr) bool
+pkg runtime, func PersistRange(unsafe.Pointer, uintptr)
+pkg runtime, func PmemInit(string) (unsafe.Pointer, error)
+pkg runtime, func SetRoot(unsafe.Pointer) error
+pkg runtime, func SwizzlePointer(uintptr) uintptr
+pkg runtime, var AppCallBack func(unsafe.Pointer)
 pkg runtime/debug, func ReadBuildInfo() (*BuildInfo, bool)
 pkg runtime/debug, type BuildInfo struct
 pkg runtime/debug, type BuildInfo struct, Deps []*Module
