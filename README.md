@@ -1,11 +1,10 @@
 ## Introduction
 `go-pmem` is a project that adds native persistent memory support to Go. This is
-achieved through a combination of language extensions, enhancements to the Go
-memory allocator and garbage collector, a growable heap design and runtime
-support for pointer swizzling.
-
-## Design
-The design details of `go-pmem` can be found in the `design/` folder.
+achieved through a combination of language extensions, compiler instrumentation,
+and runtime changes. Detailed design and implementation details of go-pmem
+can be found in the [ATC 2020 paper](https://www.usenix.org/conference/atc20/presentation/george)
+on go-pmem. We have also created a [website](https://vmware.github.io/persistent-memory-projects/)
+which contains additional documentation and performance reports.
 
 ## How to Build
 The persistent memory changes introduced in `go-pmem` is currently supported
@@ -28,11 +27,11 @@ The official Go documentation on building the Go compiler can be found
 
 ## Related Projects
 ### go-pmem-transaction
-This is a project that aims to make persistent memory more accessible to Go
-programmers. It consists of two packages - `pmem` and `transaction`. `pmem`
-package provides access to persistent memory data through named objects. The
-`transaction` package provides an implementation of undo and redo logging for
-crash-consistent updates to persistent memory data.
+`go-pmem-transaction` project provides two packages that go-pmem depends on.
+The `pmem` package provides APIs to initialize persistent memory and access
+persistent memory data through named objects. The `transaction` package provides
+the transactional functionalities that go-pmem uses for enabling crash-consistent
+persistent memory data updates.
 Project home page - https://github.com/vmware/go-pmem-transaction
 ### Go Redis
 Go Redis is a Go implementation of Redis designed to run on persistent memory.
