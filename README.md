@@ -1,3 +1,5 @@
+[![Actions Status](https://github.com/jerrinsg/go-pmem/workflows/CI/badge.svg)](https://github.com/jerrinsg/go-pmem/actions)
+
 ## Introduction
 `go-pmem` is a project that adds native persistent memory support to Go. This is
 achieved through a combination of language extensions, compiler instrumentation,
