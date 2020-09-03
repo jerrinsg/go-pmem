@@ -1,4 +1,4 @@
-![CI](https://github.com/jerrinsg/go-pmem/workflows/CI/badge.svg)
+[![Actions Status](https://github.com/jerrinsg/go-pmem/workflows/CI/badge.svg)](https://github.com/jerrinsg/go-pmem/actions)
 
 ## Introduction
 `go-pmem` is a project that adds native persistent memory support to Go. This is
