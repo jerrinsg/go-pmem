@@ -296,7 +296,7 @@ func pmemAutoFlush() bool {
 			// This nvdimm region does not have a persistence domain file
 			return false
 		}
-		n := read(pfd, unsafe.Pointer(&pathBuf[0]), PATH_MAX)
+		n := read(pfd, unsafe.Pointer(&pathBuf[0]), pathMax)
 		closefd(pfd)
 		if n <= 0 {
 			// Invalid format of the persistence domain file

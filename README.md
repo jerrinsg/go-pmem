@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.com/jerrinsg/go-pmem.svg?branch=master)](https://travis-ci.com/jerrinsg/go-pmem)
+![CI](https://github.com/jerrinsg/go-pmem/workflows/CI/badge.svg)
 
 ## Introduction
 `go-pmem` is a project that adds native persistent memory support to Go. This is
