@@ -419,7 +419,7 @@ func newdefer(siz int32) *_defer {
 		// Allocate new defer+args.
 		systemstack(func() {
 			total := roundupsize(totaldefersize(uintptr(siz)))
-			d = (*_defer)(mallocgc(total, deferType, true))
+			d = (*_defer)(mallocgc(total, deferType, needZeroed, isNotPersistent))
 		})
 		if debugCachedWork {
 			// Duplicate the tail below so if there's a

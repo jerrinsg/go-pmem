@@ -18,6 +18,12 @@ import (
 const tmpstringbufsize = 32
 const zeroValSize = 1024 // must match value of runtime/map.go:maxZero
 
+// Constants related to persistent memory management
+const (
+	isNotPersistent = 0
+	isPersistent    = 1
+)
+
 func walk(fn *Node) {
 	Curfn = fn
 
@@ -1428,10 +1434,10 @@ opswitch:
 			// with same elem.Width for the from slice.
 			size := nod(OMUL, conv(length, types.Types[TUINTPTR]), conv(nodintconst(t.Elem().Width), types.Types[TUINTPTR]))
 
-			// instantiate mallocgc(size uintptr, typ *byte, needszero bool) unsafe.Pointer
+			// instantiate mallocgc(size uintptr, typ *byte, needszero bool, memtype int) unsafe.Pointer
 			fn := syslook("mallocgc")
 			sh := nod(OSLICEHEADER, nil, nil)
-			sh.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, size, nodnil(), nodbool(false))
+			sh.Left = mkcall1(fn, types.Types[TUNSAFEPTR], init, size, nodnil(), nodbool(false), nodintconst(int64(isNotPersistent)))
 			sh.Left.MarkNonNil()
 			sh.List.Set2(length, length)
 			sh.Type = t

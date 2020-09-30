@@ -15,7 +15,7 @@ package runtime
 import "unsafe"
 
 func newobject(typ *byte) *any
-func mallocgc(size uintptr, typ *byte, needszero bool) unsafe.Pointer
+func mallocgc(size uintptr, typ *byte, needszero bool, memtype int) unsafe.Pointer
 func panicdivide()
 func panicshift()
 func panicmakeslicelen()

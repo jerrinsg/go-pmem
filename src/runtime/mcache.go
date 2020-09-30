@@ -127,9 +127,11 @@ func freemcache(c *mcache) {
 //
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
-func (c *mcache) refill(spc spanClass) {
+// The memtype parameter indicates whether the function should return
+// a span from persistent memory or volatile memory.
+func (c *mcache) refill(spc spanClass, memtype int) {
 	// Return the current cached span to the central lists.
-	s := c.alloc[isNotPersistent][spc]
+	s := c.alloc[memtype][spc]
 
 	if uintptr(s.allocCount) != s.nelems {
 		throw("refill of span with free space remaining")
@@ -139,11 +141,11 @@ func (c *mcache) refill(spc spanClass) {
 		if s.sweepgen != mheap_.sweepgen+3 {
 			throw("bad sweepgen in refill")
 		}
-		mheap_.central[isNotPersistent][spc].mcentral.uncacheSpan(s)
+		mheap_.central[memtype][spc].mcentral.uncacheSpan(s)
 	}
 
 	// Get a new cached span from the central lists.
-	s = mheap_.central[isNotPersistent][spc].mcentral.cacheSpan()
+	s = mheap_.central[memtype][spc].mcentral.cacheSpan(memtype)
 	if s == nil {
 		throw("out of memory")
 	}
@@ -155,8 +157,11 @@ func (c *mcache) refill(spc spanClass) {
 	// Indicate that this span is cached and prevent asynchronous
 	// sweeping in the next sweep phase.
 	s.sweepgen = mheap_.sweepgen + 3
+	if s.memtype != memtype {
+		throw("refill: got invalid span")
+	}
 
-	c.alloc[isNotPersistent][spc] = s
+	c.alloc[memtype][spc] = s
 }
 
 func (c *mcache) releaseAll() {
@@ -164,7 +169,7 @@ func (c *mcache) releaseAll() {
 		for i := range c.alloc[memtype] {
 			s := c.alloc[memtype][i]
 			if s != &emptymspan {
-				mheap_.central[isNotPersistent][i].mcentral.uncacheSpan(s)
+				mheap_.central[memtype][i].mcentral.uncacheSpan(s)
 				c.alloc[memtype][i] = &emptymspan
 			}
 		}

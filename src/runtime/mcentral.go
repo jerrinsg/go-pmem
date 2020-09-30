@@ -85,7 +85,9 @@ func (c *mcentral) fullSwept(sweepgen uint32) *spanSet {
 }
 
 // Allocate a span to use in an mcache.
-func (c *mcentral) cacheSpan() *mspan {
+// The memtype parameter indicates if the memory should be allocated from
+// persistent memory or volatile memory.
+func (c *mcentral) cacheSpan(memtype int) *mspan {
 	// Deduct credit for this span allocation and sweep if necessary.
 	spanBytes := uintptr(class_to_allocnpages[c.spanclass.sizeclass()]) * _PageSize
 	deductSweepCredit(spanBytes, 0)
@@ -164,7 +166,7 @@ func (c *mcentral) cacheSpan() *mspan {
 	}
 
 	// We failed to get a span from the mcentral so get one from mheap.
-	s = c.grow()
+	s = c.grow(memtype)
 	if s == nil {
 		return nil
 	}
@@ -268,11 +270,13 @@ func (c *mcentral) uncacheSpan(s *mspan) {
 }
 
 // grow allocates a new empty span from the heap and initializes it for c's size class.
-func (c *mcentral) grow() *mspan {
+// The memtype parameter indicates if the memory should be allocated from
+// persistent memory or volatile memory.
+func (c *mcentral) grow(memtype int) *mspan {
 	npages := uintptr(class_to_allocnpages[c.spanclass.sizeclass()])
 	size := uintptr(class_to_size[c.spanclass.sizeclass()])
 
-	s := mheap_.alloc(npages, c.spanclass, true, isNotPersistent)
+	s := mheap_.alloc(npages, c.spanclass, true, memtype)
 	if s == nil {
 		return nil
 	}

@@ -92,18 +92,18 @@ func makechan(t *chantype, size int) *hchan {
 	switch {
 	case mem == 0:
 		// Queue or element size is zero.
-		c = (*hchan)(mallocgc(hchanSize, nil, true))
+		c = (*hchan)(mallocgc(hchanSize, nil, needZeroed, isNotPersistent))
 		// Race detector uses this location for synchronization.
 		c.buf = c.raceaddr()
 	case elem.ptrdata == 0:
 		// Elements do not contain pointers.
 		// Allocate hchan and buf in one call.
-		c = (*hchan)(mallocgc(hchanSize+mem, nil, true))
+		c = (*hchan)(mallocgc(hchanSize+mem, nil, needZeroed, isNotPersistent))
 		c.buf = add(unsafe.Pointer(c), hchanSize)
 	default:
 		// Elements contain pointers.
 		c = new(hchan)
-		c.buf = mallocgc(mem, elem, true)
+		c.buf = mallocgc(mem, elem, needZeroed, isNotPersistent)
 	}
 
 	c.elemsize = uint16(elem.size)
