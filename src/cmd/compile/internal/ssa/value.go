@@ -58,6 +58,8 @@ type Value struct {
 	InCache bool
 	// transaction related identifiers
 	StoreWithinTx bool
+	LogThisStore bool
+	TxHandle *Value
 
 	// Storage for the first three args
 	argstorage [3]*Value
