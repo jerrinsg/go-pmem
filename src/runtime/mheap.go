@@ -295,6 +295,8 @@ type heapArena struct {
 	//
 	// Read atomically and written with an atomic CAS.
 	zeroedBase uintptr
+
+	pArena uintptr // the pointer to the persistent memory arena header
 }
 
 // arenaHint is a hint for where to grow the heap arenas. See
@@ -468,7 +470,6 @@ type mspan struct {
 	speciallock mutex         // guards specials list
 	specials    *special      // linked list of special records sorted by offset.
 	memtype     int           // the type of memory that this span represents (persistent/volatile)
-	pArena      uintptr       // the pointer to the persistent memory arena header
 }
 
 func (s *mspan) base() uintptr {
@@ -1023,6 +1024,7 @@ func (h *mheap) tryAllocMSpan() *mspan {
 		return nil
 	}
 	// Pull off the last entry in the cache.
+	// TODO xxx jerrin should this be expanded
 	s := pp.mspancache.buf[pp.mspancache.len-1]
 	pp.mspancache.len--
 	return s
@@ -1198,13 +1200,14 @@ func (h *mheap) allocSpan(npages uintptr, manual bool, spanclass spanClass, sysS
 	unlock(&h.lock)
 
 HaveSpan:
-	// jerrin TODO xxx missing t.pArena = s.pArena
-	if s.memtype != memtype {
-		throw("allocSpanLocked: got incorrect span in h.free")
-	}
+
 	// At this point, both s != nil and base != 0, and the heap
 	// lock is no longer held. Initialize the span.
 	s.init(base, npages)
+
+	// determine if this is the correct place for setting memtype
+	s.memtype = memtype
+
 	if h.allocNeedsZero(base, npages) {
 		s.needzero = 1
 	}
@@ -1315,8 +1318,15 @@ HaveSpan:
 func (h *mheap) grow(npage uintptr, memtype int) bool {
 	// We must grow the heap in whole palloc chunks.
 	ask := alignUp(npage, pallocChunkPages) * pageSize
+	if memtype == isPersistent {
+		//println("grow npage = ", npage, " ask (pages) = ", ask/pageSize)
+	}
+	var arenaPtr *pArena
 
+	shouldReserve := false
+	mdSize := uintptr(0)
 	totalGrowth := uintptr(0)
+	trackAddr := uintptr(0)
 	// This may overflow because ask could be very large
 	// and is otherwise unrelated to h.curArena.base.
 	end := h.curArena[memtype].base + ask
@@ -1326,9 +1336,40 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		// arena space. This may not be contiguous with the
 		// current arena, so we have to request the full ask.
 		av, asize := h.sysAlloc(ask, memtype)
+		trackAddr = uintptr(av)
 		if av == nil {
 			print("runtime: out of memory: cannot allocate ", ask, "-byte block (", memstats.heap_sys, " in use)\n")
 			return false
+		}
+
+		// Write the header data for the new persistent memory arena
+		offset := uintptr(0)
+		if memtype == isPersistent {
+			shouldReserve = true
+			if pmemInfo.nextMapOffset == 0 {
+				// This is the first time heap growth. The first arena stores the
+				// global persistent memory header as well, so leave space for that
+				offset = pmemHeaderSize
+			}
+			arenaPtr = (*pArena)(unsafe.Pointer(uintptr(av) + offset))
+			arenaPtr.size = asize
+			arenaPtr.mapAddr = uintptr(av)
+			arenaPtr.fileOffset = pmemInfo.nextMapOffset
+			arenaPtr.magic = hdrMagic // todo - replace this with sth like a checksum
+			PersistRange(unsafe.Pointer(arenaPtr), unsafe.Sizeof(*arenaPtr))
+
+			// Increment the mapped size in persistent memory header
+			pmemHeader.mappedSize += (asize - offset)
+			PersistRange(unsafe.Pointer(&pmemHeader.mappedSize), unsafe.Sizeof(asize))
+
+			// Increment the next map offset
+			pmemInfo.nextMapOffset += asize
+
+			for ai := arenaIndex(uintptr(av)); ai <= arenaIndex(uintptr(av)+asize-1); ai++ {
+				arena := mheap_.arenas[ai.l1()][ai.l2()]
+				arena.pArena = (uintptr)(unsafe.Pointer(arenaPtr))
+			}
+			mdSize, _ = arenaPtr.layout()
 		}
 
 		if uintptr(av) == h.curArena[memtype].end {
@@ -1361,13 +1402,14 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		// We know this won't overflow, because sysAlloc returned
 		// a valid region starting at h.curArena.base which is at
 		// least ask bytes in size.
-		nBase = alignUp(h.curArena[memtype].base+ask, physPageSize)
+		nBase = alignUp(h.curArena[memtype].base+ask /*+mdSize*/, physPageSize)
 	}
 
 	// Grow into the current arena.
 	v := h.curArena[memtype].base
 	h.curArena[memtype].base = nBase
 	h.pages[memtype].grow(v, nBase-v)
+
 	totalGrowth += nBase - v
 
 	// We just caused a heap growth, so scavenge down what will soon be used.
@@ -1380,6 +1422,9 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 			todo = overage
 		}
 		h.pages[memtype].scavenge(todo, false)
+	}
+	if shouldReserve {
+		h.pages[memtype].allocRange(trackAddr, mdSize/pageSize)
 	}
 	return true
 }
@@ -1467,7 +1512,7 @@ func (h *mheap) freeSpanLocked(s *mspan, acctinuse, acctidle bool) {
 	}
 
 	// Mark the space as free.
-	h.pages[isNotPersistent].free(s.base(), s.npages)
+	h.pages[s.memtype].free(s.base(), s.npages)
 
 	// Free the span structure. We no longer have a use for it.
 	s.state.set(mSpanDead)
@@ -1486,6 +1531,7 @@ func (h *mheap) scavengeAll() {
 	lock(&h.lock)
 	// Start a new scavenge generation so we have a chance to walk
 	// over the whole heap.
+	// TODO XXX jerrin anything to do here?
 	h.pages[isNotPersistent].scavengeStartGen()
 	released := h.pages[isNotPersistent].scavenge(^uintptr(0), false)
 	gen := h.pages[isNotPersistent].scav.gen

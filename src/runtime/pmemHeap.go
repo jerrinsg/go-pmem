@@ -191,13 +191,14 @@ func PmemInit(fname string) (unsafe.Pointer, error) {
 		}
 	}
 	// TODO - Set persistent memory as initialized
+	atomic.Store(&pmemInfo.initState, initDone)
 
 	if !firstInit {
 		// Enable garbage collection
 		enableGC(gcp)
 	}
 
-	return nil, error(errorString("Persistent memory initialization not fully supported"))
+	return pmemInfo.root, nil
 }
 
 // Arena information structure which will be used during reconstruction and
@@ -335,9 +336,11 @@ func SetRoot(addr unsafe.Pointer) (err error) {
 		return error(errorString("Invalid address passed to SetRoot"))
 	}
 
-	pa := (*pArena)(unsafe.Pointer(s.pArena))
+	ai := arenaIndex(uintptr(addr))
+	arena := mheap_.arenas[ai.l1()][ai.l2()]
+	pa := (*pArena)(unsafe.Pointer(arena.pArena))
 	fo := pa.fileOffset
-	po := uintptr(addr) - s.pArena
+	po := uintptr(addr) - arena.pArena
 
 	lock(&pmemInfo.rootLock)
 	pmemInfo.root = addr

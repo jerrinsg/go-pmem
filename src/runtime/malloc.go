@@ -1214,6 +1214,9 @@ func mallocgc(size uintptr, typ *_type, needzero bool, memtype int) unsafe.Point
 		}
 	}
 
+	if span.memtype != memtype {
+		throw("Invalid memtype")
+	}
 	return x
 }
 
@@ -1233,7 +1236,7 @@ func largeAlloc(size uintptr, needzero bool, noscan bool, memtype int) *mspan {
 	// Deduct credit for this span allocation and sweep if
 	// necessary. mHeap_Alloc will also sweep npages, so this only
 	// pays the debt down to npage pages.
-	deductSweepCredit(npages*_PageSize, npages)
+	deductSweepCredit(npages*_PageSize, npages, memtype)
 
 	spc := makeSpanClass(0, noscan)
 	s := mheap_.alloc(npages, spc, needzero, memtype)

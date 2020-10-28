@@ -51,6 +51,7 @@ func metadataSize(size uintptr) uintptr {
 // of page size to find the required sizes.
 //
 // TODO: this calculations in this function needs to be further improved
+// TODO XXX jerrin
 func (p *pArena) layout() (uintptr, uintptr) {
 	// ps := pageSize / spanBytesPerPage
 	// Y + metadataSize(Y) = S'

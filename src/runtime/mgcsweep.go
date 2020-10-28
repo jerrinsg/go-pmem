@@ -48,7 +48,7 @@ type sweepdata struct {
 	//
 	// Reset at mark termination.
 	// Used by mheap.nextSpanForSweep.
-	centralIndex sweepClass
+	centralIndex [maxMemTypes]sweepClass
 }
 
 // sweepClass is a spanClass and one bit to represent whether we're currently
@@ -93,12 +93,12 @@ func (s sweepClass) split() (spc spanClass, full bool) {
 // nextSpanForSweep finds and pops the next span for sweeping from the
 // central sweep buffers. It returns ownership of the span to the caller.
 // Returns nil if no such span exists.
-func (h *mheap) nextSpanForSweep() *mspan {
+func (h *mheap) nextSpanForSweep(memtype int) *mspan {
 	sg := h.sweepgen
-	for sc := sweep.centralIndex.load(); sc < numSweepClasses; sc++ {
+	for sc := sweep.centralIndex[memtype].load(); sc < numSweepClasses; sc++ {
 		spc, full := sc.split()
 		// jerrin TODO XXX
-		c := &h.central[isNotPersistent][spc].mcentral
+		c := &h.central[memtype][spc].mcentral
 		var s *mspan
 		if full {
 			s = c.fullUnswept(sg).pop()
@@ -108,12 +108,12 @@ func (h *mheap) nextSpanForSweep() *mspan {
 		if s != nil {
 			// Write down that we found something so future sweepers
 			// can start from here.
-			sweep.centralIndex.update(sc)
+			sweep.centralIndex[memtype].update(sc)
 			return s
 		}
 	}
 	// Write down that we found nothing.
-	sweep.centralIndex.update(sweepClassDone)
+	sweep.centralIndex[memtype].update(sweepClassDone)
 	return nil
 }
 
@@ -164,6 +164,7 @@ func bgsweep(c chan int) {
 	goparkunlock(&sweep.lock, waitReasonGCSweepWait, traceEvGoBlock, 1)
 
 	for {
+		// jerrin TODO XXX
 		for sweepone() != ^uintptr(0) {
 			sweep.nbgsweep++
 			Gosched()
@@ -200,46 +201,95 @@ func sweepone() uintptr {
 	atomic.Xadd(&mheap_.sweepers, +1)
 
 	// Find a span to sweep.
-	var s *mspan
+	var sv, sp *mspan
 	sg := mheap_.sweepgen
+
+	// 1.  memtype == isPersistent
+	var memtype int
+	var npagesv, npagesp uintptr
+	npagesv = ^uintptr(0)
+	npagesp = ^uintptr(0)
+
+	memtype = isNotPersistent
 	for {
-		s = mheap_.nextSpanForSweep()
-		if s == nil {
-			atomic.Store(&mheap_.sweepdone, 1)
+		sv = mheap_.nextSpanForSweep(memtype)
+		if sv == nil {
 			break
 		}
-		if state := s.state.get(); state != mSpanInUse {
+		if state := sv.state.get(); state != mSpanInUse {
 			// This can happen if direct sweeping already
 			// swept this span, but in that case the sweep
 			// generation should always be up-to-date.
-			if !(s.sweepgen == sg || s.sweepgen == sg+3) {
-				print("runtime: bad span s.state=", state, " s.sweepgen=", s.sweepgen, " sweepgen=", sg, "\n")
+			if !(sv.sweepgen == sg || sv.sweepgen == sg+3) {
+				print("runtime: bad span sv.state=", state, " sv.sweepgen=", sv.sweepgen, " sweepgen=", sg, "\n")
 				throw("non in-use span in unswept list")
 			}
 			continue
 		}
-		if s.sweepgen == sg-2 && atomic.Cas(&s.sweepgen, sg-2, sg-1) {
+		if sv.sweepgen == sg-2 && atomic.Cas(&sv.sweepgen, sg-2, sg-1) {
 			break
 		}
 	}
 
 	// Sweep the span we found.
-	npages := ^uintptr(0)
-	if s != nil {
-		npages = s.npages
-		if s.sweep(false) {
+	if sv != nil {
+		npagesv = sv.npages
+		if sv.sweep(false) {
 			// Whole span was freed. Count it toward the
 			// page reclaimer credit since these pages can
 			// now be used for span allocation.
-			atomic.Xadduintptr(&mheap_.reclaimCredit, npages)
+			atomic.Xadduintptr(&mheap_.reclaimCredit, npagesv)
 		} else {
 			// Span is still in-use, so this returned no
 			// pages to the heap and the span needs to
 			// move to the swept in-use list.
-			npages = 0
+			npagesv = 0
+		}
+		goto finally
+	}
+
+	memtype = isPersistent
+	for {
+		sp = mheap_.nextSpanForSweep(memtype)
+		if sp == nil {
+			break
+		}
+		if state := sp.state.get(); state != mSpanInUse {
+			// This can happen if direct sweeping already
+			// swept this span, but in that case the sweep
+			// generation should always be up-to-date.
+			if !(sp.sweepgen == sg || sp.sweepgen == sg+3) {
+				print("runtime: bad span sp.state=", state, " sp.sweepgen=", sp.sweepgen, " sweepgen=", sg, "\n")
+				throw("non in-use span in unswept list")
+			}
+			continue
+		}
+		if sp.sweepgen == sg-2 && atomic.Cas(&sp.sweepgen, sg-2, sg-1) {
+			break
 		}
 	}
 
+	if sp == nil && sv == nil {
+		atomic.Store(&mheap_.sweepdone, 1)
+	}
+
+	// Sweep the span we found.
+	if sp != nil {
+		npagesp = sp.npages
+		if sp.sweep(false) {
+			// Whole span was freed. Count it toward the
+			// page reclaimer credit since these pages can
+			// now be used for span allocation.
+			atomic.Xadduintptr(&mheap_.reclaimCredit, npagesp)
+		} else {
+			// Span is still in-use, so this returned no
+			// pages to the heap and the span needs to
+			// move to the swept in-use list.
+			npagesp = 0
+		}
+	}
+
+finally:
 	// Decrement the number of active sweepers and if this is the
 	// last one print trace information.
 	if atomic.Xadd(&mheap_.sweepers, -1) == 0 && atomic.Load(&mheap_.sweepdone) != 0 {
@@ -257,6 +307,7 @@ func sweepone() uintptr {
 		systemstack(func() {
 			lock(&mheap_.lock)
 			mheap_.pages[isNotPersistent].scavengeStartGen()
+			mheap_.pages[isPersistent].scavengeStartGen()
 			unlock(&mheap_.lock)
 		})
 		// Since we might sweep in an allocation path, it's not possible
@@ -269,7 +320,13 @@ func sweepone() uintptr {
 		}
 	}
 	_g_.m.locks--
-	return npages
+	if npagesv == ^uintptr(0) && npagesp == ^uintptr(0) {
+		return ^uintptr(0)
+	}
+	if npagesv == ^uintptr(0) {
+		return npagesp
+	}
+	return npagesv
 }
 
 // isSweepDone reports whether all spans are swept or currently being swept.
@@ -630,7 +687,7 @@ func (s *mspan) reportZombies() {
 // sweep phase between GC cycles.
 //
 // mheap_ must NOT be locked.
-func deductSweepCredit(spanBytes uintptr, callerSweepPages uintptr) {
+func deductSweepCredit(spanBytes uintptr, callerSweepPages uintptr, memtype int) {
 	if mheap_.sweepPagesPerByte == 0 {
 		// Proportional sweep is done or disabled.
 		return
@@ -647,6 +704,7 @@ retry:
 	newHeapLive := uintptr(atomic.Load64(&memstats.heap_live)-mheap_.sweepHeapLiveBasis) + spanBytes
 	pagesTarget := int64(mheap_.sweepPagesPerByte*float64(newHeapLive)) - int64(callerSweepPages)
 	for pagesTarget > int64(atomic.Load64(&mheap_.pagesSwept)-sweptBasis) {
+		// XXX jerrin TODO
 		if sweepone() == ^uintptr(0) {
 			mheap_.sweepPagesPerByte = 0
 			break

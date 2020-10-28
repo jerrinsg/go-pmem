@@ -33,7 +33,9 @@ func logHeapBits(addr uintptr, startByte, endByte *byte) {
 		throw("Invalid heap type bits logging request")
 	}
 
-	pArena := (*pArena)(unsafe.Pointer(span.pArena))
+	ai := arenaIndex(addr)
+	arena := mheap_.arenas[ai.l1()][ai.l2()]
+	pArena := (*pArena)(unsafe.Pointer(arena.pArena))
 	numHeapBytes := uintptr(unsafe.Pointer(endByte)) - uintptr(unsafe.Pointer(startByte)) + 1
 	dstAddr := pmemHeapBitsAddr(addr, pArena)
 
@@ -60,7 +62,9 @@ func clearHeapBits(addr uintptr, size uintptr) {
 		throw("Invalid heap type bits logging request")
 	}
 
-	pArena := (*pArena)(unsafe.Pointer(span.pArena))
+	ai := arenaIndex(addr)
+	arena := mheap_.arenas[ai.l1()][ai.l2()]
+	pArena := (*pArena)(unsafe.Pointer(arena.pArena))
 	heapBitsAddr := pmemHeapBitsAddr(addr, pArena)
 	numTypeBytes := size / bytesPerBitmapByte
 	memclrNoHeapPointers(heapBitsAddr, numTypeBytes)
@@ -97,25 +101,32 @@ func logSpanAlloc(s *mspan) {
 	// The value that should be logged
 	logVal := spanLogValue(s)
 
-	bitmapVal := *logAddr
-	if bitmapVal != 0 {
-		// The span bitmap already has an entry corresponding to this span.
-		// We clear the span bitmap when a span is freed. Since the entry still
-		// exists, this means that the span is getting reused. Hence, the first
-		// 31 bits of the entry should match with the corresponding value to be
-		// logged. The last bit need not be the same as needzero bit can change
-		// as spans get reused.
-		// compare the first 31 bits
-		if bitmapVal>>1 != logVal>>1 {
-			throw("Logged span information mismatch")
-		}
-		// compare the last bit
-		if bitmapVal&1 == logVal&1 {
-			// all bits are equal, need not store the value again
-			return
-		}
-	}
+	//bitmapVal := *logAddr
+	// jerrin XXX TODO
+	//if bitmapVal != 0 {
+	// The span bitmap already has an entry corresponding to this span.
+	// We clear the span bitmap when a span is freed. Since the entry still
+	// exists, this means that the span is getting reused. Hence, the first
+	// 31 bits of the entry should match with the corresponding value to be
+	// logged. The last bit need not be the same as needzero bit can change
+	// as spans get reused.
+	// compare the first 31 bits
+	//if bitmapVal>>1 != logVal>>1 {
+	//throw("Logged span information mismatch")
+	//}
+	// compare the last bit
+	//if bitmapVal&1 == logVal&1 {
+	// all bits are equal, need not store the value again
+	//return
+	//}
+	//}
 
+	if uintptr(unsafe.Pointer(logAddr)) == 0 {
+		println("span base = ", hex(s.base()))
+		println("logging addr = ", unsafe.Pointer(logAddr))
+		println("log value = ", logVal)
+		throw("logging error")
+	}
 	atomic.Store(logAddr, logVal)
 	PersistRange(unsafe.Pointer(logAddr), unsafe.Sizeof(*logAddr))
 }
@@ -152,7 +163,9 @@ func spanLogValue(s *mspan) uint32 {
 // A helper function to compute the address at which the span log has to be
 // written.
 func spanLogAddr(s *mspan) *uint32 {
-	pArena := (*pArena)(unsafe.Pointer(s.pArena))
+	ai := arenaIndex(s.base())
+	arena := mheap_.arenas[ai.l1()][ai.l2()]
+	pArena := (*pArena)(unsafe.Pointer(arena.pArena))
 	mdSize, allocSize := pArena.layout()
 	arenaStart := pArena.mapAddr + mdSize
 

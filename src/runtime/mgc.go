@@ -2159,7 +2159,8 @@ func gcSweep(mode gcMode) {
 	mheap_.reclaimCredit = 0
 	unlock(&mheap_.lock)
 
-	sweep.centralIndex.clear()
+	sweep.centralIndex[isPersistent].clear()
+	sweep.centralIndex[isNotPersistent].clear()
 
 	if !_ConcurrentSweep || mode == gcForceBlockMode {
 		// Special case synchronous sweep.

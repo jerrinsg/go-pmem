@@ -90,7 +90,7 @@ func (c *mcentral) fullSwept(sweepgen uint32) *spanSet {
 func (c *mcentral) cacheSpan(memtype int) *mspan {
 	// Deduct credit for this span allocation and sweep if necessary.
 	spanBytes := uintptr(class_to_allocnpages[c.spanclass.sizeclass()]) * _PageSize
-	deductSweepCredit(spanBytes, 0)
+	deductSweepCredit(spanBytes, 0, memtype)
 
 	sg := mheap_.sweepgen
 
