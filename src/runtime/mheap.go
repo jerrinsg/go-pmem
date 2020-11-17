@@ -1372,10 +1372,11 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 			mdSize, _ = arenaPtr.layout()
 		}
 
-		if uintptr(av) == h.curArena[memtype].end {
+		if uintptr(av) == h.curArena[memtype].end && shouldReserve == false {
 			// The new space is contiguous with the old
 			// space, so just extend the current space.
 			h.curArena[memtype].end = uintptr(av) + asize
+			// TODO XXX jerrin
 		} else {
 			// The new space is discontiguous. Track what
 			// remains of the current space and switch to
@@ -1402,7 +1403,11 @@ func (h *mheap) grow(npage uintptr, memtype int) bool {
 		// We know this won't overflow, because sysAlloc returned
 		// a valid region starting at h.curArena.base which is at
 		// least ask bytes in size.
-		nBase = alignUp(h.curArena[memtype].base+ask /*+mdSize*/, physPageSize)
+		if shouldReserve {
+			nBase = alignUp(h.curArena[memtype].base+ask+mdSize, pallocChunkBytes)
+		} else {
+			nBase = alignUp(h.curArena[memtype].base+ask, physPageSize)
+		}
 	}
 
 	// Grow into the current arena.

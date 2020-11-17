@@ -674,7 +674,8 @@ func mSysStatInc(sysStat *uint64, n uintptr) {
 	}
 	if val := atomic.Xadduintptr((*uintptr)(unsafe.Pointer(sysStat)), n); val < n {
 		print("runtime: stat overflow: val ", val, ", n ", n, "\n")
-		exit(2)
+		//exit(2)
+		throw("stat overflow")
 	}
 }
 
@@ -691,6 +692,7 @@ func mSysStatDec(sysStat *uint64, n uintptr) {
 	}
 	if val := atomic.Xadduintptr((*uintptr)(unsafe.Pointer(sysStat)), uintptr(-int64(n))); val+n < n {
 		print("runtime: stat underflow: val ", val, ", n ", n, "\n")
-		exit(2)
+		//exit(2)
+		throw("stat underflow")
 	}
 }

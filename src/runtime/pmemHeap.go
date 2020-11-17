@@ -328,6 +328,16 @@ func (ar *arenaInfo) reconstruct() {
 	allocPages := allocSize >> pageShift
 	spanBase := ar.mapAddr + mdata
 
+	lock(&h.lock)
+	h.pages[isPersistent].grow(ar.mapAddr, mdata+allocSize)
+	h.pages[isPersistent].allocRange(ar.mapAddr, (mdata+allocSize)/pageSize)
+	unlock(&h.lock)
+
+	// jerrin XXX TODO
+	mSysStatInc(&memstats.heap_inuse, allocSize)
+	//mSysStatDec(&memstats.heap_idle, allocSize)
+	atomic.Xadd64(&mheap_.pagesInUse, int64(allocSize/pageSize))
+
 	// We need to add the space occupied by the common persistent memory header
 	// for the first arena.
 	var off uintptr
@@ -354,11 +364,17 @@ func (ar *arenaInfo) reconstruct() {
 			}
 			npages := (j - i)
 			lock(&h.lock)
+			// TODO jerrin XXX
+			// since you are freeing spans here, maybe initially you should mark
+			// all pages as allocated
+			// TODO XXX jerrin this ends up creating a span -- not necessary ?
+			// are there any costs to creating a span
 			freeSpan(npages, addr, 1, (uintptr)(unsafe.Pointer(pa)))
 			unlock(&h.lock)
 			i += npages
 		} else {
 			s := createSpan(sval, addr)
+			//h.pages[isPersistent].allocRange(s.base(), s.npages)
 			// TODO
 			// s.pArena = (uintptr)(unsafe.Pointer(pa))
 			// TODO xxx jerrin iterate over all the possible arenas
@@ -471,7 +487,8 @@ func createSpanCore(spc spanClass, base, npages uintptr, large, needzero bool) *
 	if large {
 		// TODO jerrin
 		//h.free[isPersistent].insert(s)
-		throw("large span not supported")
+		c := &mheap_.central[isPersistent][spc].mcentral
+		c.fullSwept(sg).push(s)
 	} else {
 		// In-use and empty (no free objects) small spans are stored in the empty
 		// list in mcentral. Since the span is empty, it will not be cached in

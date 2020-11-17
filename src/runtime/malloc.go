@@ -1245,7 +1245,7 @@ func largeAlloc(size uintptr, needzero bool, noscan bool, memtype int) *mspan {
 	}
 	// Put the large span in the mcentral swept list so that it's
 	// visible to the background sweeper.
-	mheap_.central[isNotPersistent][spc].mcentral.fullSwept(mheap_.sweepgen).push(s)
+	mheap_.central[memtype][spc].mcentral.fullSwept(mheap_.sweepgen).push(s)
 	s.limit = s.base() + size
 	heapBitsForAddr(s.base()).initSpan(s)
 	return s
