@@ -15,6 +15,18 @@ var pmemFuncs struct {
 	fence fenceFunc
 }
 
+const (
+	// Block device compatibility mode
+	// In order to let application developers use our package even in those
+	// machines that do not have pmem, we are adding a block device
+	// compatibility mode. This mode gives a reduced consistency guarantee
+	// that the pmem application is resilient to application crashes or
+	// restart, but data can get irrecoverably corrupted in case of a host
+	// crash or restart. Therefore no need to msync data writes.
+	// See https://vmware.github.io/persistent-memory-projects/Block-Device-Compatibility/
+	blockDeviceCompatibility = true
+)
+
 // The init function runs even before the main() function of the application is run.
 // This function is used to set the flush and fence functions to be used according
 // to CPU capabilities.
@@ -49,15 +61,9 @@ func PersistRange(addr unsafe.Pointer, len uintptr) {
 		pmemFuncs.flush(uintptr(addr), len)
 		pmemFuncs.fence()
 	} else {
-		// Block device compatibility mode
-		// In order to let application developers use our package even in those
-		// machines that do not have pmem, we are adding a block device
-		// compatibility mode. This mode gives a reduced consistency guarantee
-		// that the pmem application is resilient to application crashes or
-		// restart, but data can get irrecoverably corrupted in case of a host
-		// crash or restart. Therefore no need to msync data writes.
-		// See https://vmware.github.io/persistent-memory-projects/Block-Device-Compatibility/
-		// msyncRange(uintptr(addr), len)
+		if blockDeviceCompatibility == false {
+			msyncRange(uintptr(addr), len)
+		}
 	}
 }
 
@@ -66,8 +72,9 @@ func FlushRange(addr unsafe.Pointer, len uintptr) {
 	if pmemInfo.isPmem {
 		pmemFuncs.flush(uintptr(addr), len)
 	} else {
-		// Block device compatibility
-		// msyncRange(uintptr(addr), len)
+		if blockDeviceCompatibility == false {
+			msyncRange(uintptr(addr), len)
+		}
 	}
 }
 
