@@ -56,6 +56,15 @@ const (
 	_DEFAULT_FMODE = 0666
 )
 
+const (
+	// For debugging. The runtime is usually able to map arenas at the same
+	// address as it was mapped in the previous run. This makes it hard to test
+	// pointer swizzling. Setting forcedSwizzle as true makes the runtime map
+	// arenas at an offsetted address. The offset is a multiple of 1GB. This
+	// works only if each arena is sized 1GB or less.
+	forcedSwizzle = false
+)
+
 var (
 	memTypes   = []int{isPersistent, isNotPersistent}
 	pmemHeader *pHeader
@@ -277,6 +286,7 @@ func mapArenas() error {
 	}
 
 	var mapped uintptr
+	addrOffset := uintptr(0)
 	for mapped < pmemHeader.mappedSize {
 		// Map the header section of the arena to get the size of the arena and
 		// the map address. Then unmap the mapped region, and map the entire
@@ -294,7 +304,13 @@ func mapArenas() error {
 
 		// Point at the arena header
 		parena := (*pArena)(unsafe.Pointer(uintptr(mapAddr) + offset))
-		arenaMapAddr := unsafe.Pointer(parena.mapAddr)
+		if forcedSwizzle {
+			// If forced swizzling is enabled, map first arena at an offset of
+			// 1 GB, and increment offset by 1GB at each iteration. This makes
+			// each arena mapped at a different offset than the previous run.
+			addrOffset += (1 * 1024 * 1024 * 1024)
+		}
+		arenaMapAddr := unsafe.Pointer(parena.mapAddr + addrOffset)
 		arenaSize := parena.size
 		munmap(mapAddr, pArenaHeaderSize+offset)
 
