@@ -6,7 +6,8 @@ achieved through a combination of language extensions, compiler instrumentation,
 and runtime changes. Detailed design and implementation details of go-pmem
 can be found in the [ATC 2020 paper](https://www.usenix.org/conference/atc20/presentation/george)
 on go-pmem. We have also created a [website](https://vmware.github.io/persistent-memory-projects/)
-which contains additional documentation and performance reports.
+which contains additional documentation and performance reports. `go-pmem` is
+based on the 1.15 release version of Go.
 
 ## How to Build
 The persistent memory changes introduced in `go-pmem` is currently supported
@@ -21,7 +22,7 @@ go-pmem can be found in the `design/` folder. To run this application, compile
 it using the go-pmem binary as shown below:
 ```
 $ cd design
-$ ../bin/go build example.go
+$ GO111MODULE=off ../bin/go build -txn example.go
 $ ./example
 ```
 The official Go documentation on building the Go compiler can be found
