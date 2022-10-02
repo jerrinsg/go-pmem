@@ -18,9 +18,11 @@ $ ./make.bash
 ```
 The compiled Go binary will be placed in the `bin/` directory. An example
 application (`example.go`) written to use persistent memory features provided by
-go-pmem can be found in the `design/` folder. To run this application, compile
-it using the go-pmem binary as shown below:
+go-pmem can be found in the `design/` folder. This application depends on the
+[go-pmem-transaction](https://github.com/vmware/go-pmem-transaction) package and
+can be compiled as follows:
 ```
+$ GO111MODULE=off ../bin/go get -u github.com/vmware/go-pmem-transaction/...
 $ cd design
 $ GO111MODULE=off ../bin/go build -txn example.go
 $ ./example
